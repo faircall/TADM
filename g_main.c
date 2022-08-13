@@ -8,6 +8,12 @@
 
 #define min(a,b) (a < b? a : b)
 
+/*
+ *TODO: 
+ * CLEAN the code: pick a style and stick to it
+ * -refactor all the messiness
+ */
+
 // for the love of christ keep things simple on this one.
 // you're not allowed to any graphics code until you have a
 // playable world. I MEAN IT
@@ -17,15 +23,7 @@
 
 // premise for this game is: Stalker / Diablo
 
-// 8th July
-// tilemap for navigation
-// --turn into a graph? Is that necessary?
-// in our case we can just keep a constant distance of 1 from each neighbour
-// I think that'd be fastest?
-// and instead of pointers we have indices
 
-// -world-to-tile calculation (highlight cursor and character) - done
-// and graphics (this part done)
 // brain for enemy
 
 // random idea
@@ -39,6 +37,11 @@
 // so we'll have an array of different tiles, start by rendering them in different colors.
 
 // I think I just don't like camel case
+
+// I do have an alternative thought about pathfinding:
+// a geometric approach where you 'drop a line of string' from
+// your position to destination and then collision detect
+// the blockages, and then relax it to fit around the obstacles
 
 typedef enum {
     GRASSTILE,
@@ -110,46 +113,50 @@ TileMapResult world_space_to_tilemap(float worldx, float worldy, uint width, uin
 
 Vector2 tilemap_to_world_space(uint x, uint y, uint width, uint height)
 {
+    // correct
     Vector2 result;
     result.x = x * width + width/2.0f;
     result.y = y * height + height/2.0f;
     return result;
 }
 
-uint tilemap_to_index(TileMapResult tilemapResult, uint width)
+uint tilemap_to_index(TileMapResult tilemapResult, uint stride)
 {
-    uint result = tilemapResult.x + tilemapResult.y * width;
+    uint result = tilemapResult.x + tilemapResult.y * stride;
     return result;
 }
 
-TileMapResult index_to_tilemap(uint index, uint width)
+TileMapResult index_to_tilemap(uint index, uint stride)
 {
     TileMapResult result;
-    result.x = index % width;
-    result.y = index / width;
+    result.x = index % stride;
+    result.y = index / stride;
     return result;
 }
 
-TILETYPE tilemap_to_type(TileMapResult tileMapResult, TILETYPE *tileMap, uint width)
+TILETYPE tilemap_to_type(TileMapResult tileMapResult, TILETYPE *tileMap, uint stride)
 {
-    return tileMap[tileMapResult.x + tileMapResult.y*width];
+    // is that correct?
+    // this should be tiles across not width
+    return tileMap[tileMapResult.x + tileMapResult.y*stride];
 }
 
-bool free_tile(TileMapResult tileMapResult, TILETYPE *tileMap, uint width)
+bool free_tile(TileMapResult tileMapResult, TILETYPE *tileMap, uint stride)
 {
+    // seems we are allowing ourselves to pass over brick tiles?
     bool result = true;
-    if (tilemap_to_type(tileMapResult, tileMap, width) == BRICKTILE) {
+    if (tilemap_to_type(tileMapResult, tileMap, stride) == BRICKTILE) {
 	result = false;
     }
     return result;
 }
 
-NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint height)
+NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, uint tilesDown)
 {
 
     // this could be a lot shorter
     NeighbourResult result;
-    TileMapResult nodeTile = index_to_tilemap(node.current, width);
+    TileMapResult nodeTile = index_to_tilemap(node.current, tilesAcross);
     uint x = nodeTile.x;
     uint y = nodeTile.y;
     // check edge cases
@@ -160,22 +167,22 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[3] = {t0, t1, t2};
 	int added = 0;
 	for (int i = 0; i < 3; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (x == width && y == height) {
+    } else if (x == tilesAcross && y == tilesDown) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y -1};
 	TileMapResult t2 = {.x = x, .y = y - 1};
 	TileMapResult tiles[3] = {t0, t1, t2};
 	int added = 0;
 	for (int i = 0; i < 3; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -191,14 +198,14 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (x == width) {
+    } else if (x == tilesAcross) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y + 1};
 	TileMapResult t2 = {.x = x, .y = y + 1};
@@ -209,8 +216,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -227,13 +234,13 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (y == height) {
+    } else if (y == tilesDown) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y - 1};
 	TileMapResult t2 = {.x = x, .y = y - 1};
@@ -244,8 +251,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -264,8 +271,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint width, uint he
 	TileMapResult tiles[8] = {t0, t1, t2, t3, t4, t5, t6, t7};
 	int added = 0;
 	for (int i = 0; i < 8; i++) {
-	    if (free_tile(tiles[i], tileMap, width)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], width);
+	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -303,11 +310,11 @@ bool add_node(Node node, NodeArray *nodes)
     return true;
 }
 
-Node tilemap_to_terminal_node(TileMapResult tilemap, uint width)
+Node tilemap_to_terminal_node(TileMapResult tilemap, uint tilesAcross)
 {
     // turn a tilemap into a terminal node
     Node result;
-    uint index = tilemap_to_index(tilemap, width);
+    uint index = tilemap_to_index(tilemap, tilesAcross);
     result.current = index;
     result.predecessor = index;
 
@@ -316,15 +323,18 @@ Node tilemap_to_terminal_node(TileMapResult tilemap, uint width)
 
 
 
-int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *tileMap, NodeArray *nodes, uint width, uint height)
+int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *tileMap, NodeArray *nodes, uint tilesAcross, uint tilesDown)
 {
     int result = -1;
+    
     // clear the NodeArray for use
     nodes->count = 0;
     
     // i don't think height is coming into play
-    Node startNode = tilemap_to_terminal_node(start, width);
-    Node endNode = tilemap_to_terminal_node(end, width);
+
+    // we should do
+    Node startNode = tilemap_to_terminal_node(start, tilesAcross);
+    Node endNode = tilemap_to_terminal_node(end, tilesAcross);
     if (node_equals(startNode, endNode)) {
 	//
     }
@@ -351,7 +361,7 @@ int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *
 	}
 	
 	//
-	NeighbourResult neighbourResult = get_neighbours(current, tileMap, width, height);
+	NeighbourResult neighbourResult = get_neighbours(current, tileMap, tilesAcross, tilesDown);
 	for (int i = 0; i < neighbourResult.count; i++) {
 	    Node new = neighbourResult.neighbours[i];	    
 	    if (!contains_node(*nodes, new, nodesAdded)) {
@@ -369,13 +379,13 @@ int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *
     return result;
 }
 
-void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int endIndex, uint width)
+void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int endIndex, uint tilesAcross)
 {
     
     Node currentNode = nodes.nodes[endIndex];
     uint pathLen = 0;
     bool countedPath = false;
-    uint startIndex = tilemap_to_index(start, width);
+    uint startIndex = tilemap_to_index(start, tilesAcross);
     // we need to figure out how long the path will actually be
     while (!countedPath) {
 	if (currentNode.current == startIndex) {
@@ -418,7 +428,7 @@ int main(int argc, char **argv)
     Vector2 playerVelocity = {.x = 0.0f, .y = 0.0f};
     Vector2 playerHeading= {.x = 0.0f, .y = 0.0f};
 
-    Vector2 enemyPosition = {.x = 500.0f, .y = 500.0f};
+    Vector2 enemyPosition = {.x = 600.0f, .y = 400.0f};
 
     int enemyHealth = 100;
 
@@ -449,21 +459,29 @@ int main(int argc, char **argv)
     nodeArray.nodes = malloc(nodeArray.max * sizeof(Node));
 
     Path pathArray;
+    Path playerPathArray;
     pathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);
     pathArray.max = tilesAcross * tilesDown;
     pathArray.len = 0;
+
+    playerPathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);
+    playerPathArray.max = tilesAcross * tilesDown;
+    playerPathArray.len = 0;
     
-    Vector2 enemyDestinationTest = {.x = 550.0f, .y = 550.0f};
+    // Vector2 enemyDestinationTest = {.x = 550.0f, .y = 550.0f};
+    Vector2 enemyDestinationTest = {.x = 32.0f, .y = 320.0f};
     int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight),
 						 world_space_to_tilemap(enemyDestinationTest.x, enemyDestinationTest.y, tileWidth, tileHeight),
 						 tileMap,
-						 &nodeArray, tileWidth, tileHeight);
+						 &nodeArray, tilesAcross, tilesDown);
     if (flood_result != -1) {
 	reconstruct_path(&pathArray, nodeArray, world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight),
-		     flood_result, tileWidth);
+		     flood_result, tilesAcross);
     }
     
     uint enemy_path_counter = 0;
+
+    uint player_path_counter = 0;
 
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
@@ -488,23 +506,46 @@ int main(int argc, char **argv)
         struct Vector2 mousePos = {.x = GetMouseX(), .y = GetMouseY()};
        
         if (IsMouseButtonPressed(0)) {
+	    player_path_counter = 0;
             playerDestination = (Vector2){.x = mousePos.x, .y = mousePos.y};
+	    
 	    // maybe not the most efficient thing to do?
-	    TileMapResult tempTileMap = world_space_to_tilemap(playerDestination.x, playerDestination.y, tileWidth, tileHeight);
-	    playerDestination = tilemap_to_world_space(tempTileMap.x, tempTileMap.y, tileWidth, tileHeight);
-            playerHeading = Vector2Subtract(playerDestination, playerPosition);
-            playerHeading = Vector2Normalize(playerHeading);
+	    TileMapResult tempTileMapDest = world_space_to_tilemap(playerDestination.x, playerDestination.y, tileWidth, tileHeight);
+	    TileMapResult tempTileMapCurrent = world_space_to_tilemap(playerPosition.x, playerPosition.y, tileWidth, tileHeight);
+	    nodeArray.count = 0;
+	    int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tileMap, &nodeArray, tilesAcross, tilesDown);
+	    if (floodResult != -1) {
+		reconstruct_path(&playerPathArray, nodeArray, tempTileMapCurrent, floodResult, tilesAcross);
+	    } else {
+	    }
+	    
+            
+            
             
         }	
 	if (IsMouseButtonPressed(1)) {
 	    playerAttacking = true;
             
         }
-       
+
+	
         
         float dtToUse = min(dt, targetMsPerFrame);
     
         if (Vector2Distance(playerPosition, playerDestination) > 3.0f) {
+	    TileMapResult player_path_tile = index_to_tilemap(playerPathArray.indices[player_path_counter], tilesAcross);
+	    Vector2 player_path_vec = tilemap_to_world_space(player_path_tile.x, player_path_tile.y , tileWidth, tileHeight);
+	    playerHeading = Vector2Subtract(player_path_vec, playerPosition);
+	    playerHeading = Vector2Normalize(playerHeading);
+	    if (Vector2Distance(playerPosition, player_path_vec) > 3.0f) {
+		playerPosition = Vector2Add(playerPosition, Vector2Scale(playerHeading, dtToUse * 50.0f));
+	    }
+	    if (Vector2Distance(playerPosition, player_path_vec) < 3.0f && player_path_counter < playerPathArray.len) {
+		player_path_counter++;
+	    }
+		
+
+	    #if 0
             playerHeading = Vector2Subtract(playerDestination, playerPosition);
             playerHeading = Vector2Normalize(playerHeading);
             
@@ -525,6 +566,7 @@ int main(int argc, char **argv)
                     playerVelocity = (Vector2){.x = 0.0f, .y = 0.0f};
                 }
             }
+	    #endif
         } else {
 	    playerVelocity = (Vector2){.x = 0.0f, .y = 0.0f};
 	}
@@ -545,9 +587,14 @@ int main(int argc, char **argv)
             
         
         
-        TileMapResult enemy_path_tile = index_to_tilemap(pathArray.indices[enemy_path_counter], tileWidth);
+        TileMapResult enemy_path_tile = index_to_tilemap(pathArray.indices[enemy_path_counter], tilesAcross);
+
+
+	
 	Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tileWidth, tileHeight);
 	Vector2 enemy_heading_vec = Vector2Subtract(enemy_path_vec, enemyPosition);
+
+	TileMapResult enemy_current_tile = world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight);
 	enemy_heading_vec = Vector2Normalize(enemy_heading_vec);
 	if (Vector2Distance(enemyPosition, enemy_path_vec) > 3.0f) {
 	    enemyPosition = Vector2Add(enemyPosition, Vector2Scale(enemy_heading_vec, dtToUse * 50.0f));
@@ -585,7 +632,7 @@ int main(int argc, char **argv)
 		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, GREEN);
 		}
 		if (tile == BRICKTILE) {
-		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, DARKGRAY);
+		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, PINK);
 		}
 		if (tile == MUDTILE) {
 		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, DARKBROWN);
@@ -595,6 +642,12 @@ int main(int argc, char **argv)
 		}
 	    }
 	}
+	for (int i = 0; i <= pathArray.len; i++) {
+	    TileMapResult debugTile = index_to_tilemap(pathArray.indices[i], tilesAcross);
+	    DrawRectangleLines(debugTile.x * tileWidth, debugTile.y * tileHeight, tileWidth, tileHeight, YELLOW);
+	}
+	
+	DrawRectangleLines(enemy_current_tile.x * tileWidth, enemy_current_tile.y * tileHeight, tileWidth, tileHeight, RED);
 	DrawRectangleLines(playerTileMap.x * tileWidth, playerTileMap.y * tileHeight, tileWidth, tileHeight, RED);
 	DrawRectangleLines(mouseTileMap.x * tileWidth, mouseTileMap.y * tileHeight, tileWidth, tileHeight, YELLOW);
 	DrawRectangleLines(destinationTileMap.x * tileWidth, destinationTileMap.y * tileHeight, tileWidth, tileHeight, PINK);
