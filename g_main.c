@@ -10,8 +10,20 @@
 
 /*
  *TODO: 
+ 
+ *CURRENT BUG:
+ * literal edge case bug where it freezes if I go to the edge
+
+
+
  * CLEAN the code: pick a style and stick to it
  * -refactor all the messiness
+ * two bugs (at least):there's a out of bounds read (I think) on a tilemap index, it's when you pick an
+ * invalid tile as your first destination on game startup...but only sometimes?
+ * second is that clicking on an invalid tile just uses your last path...
+ * ok, so that would mean that if you don't HAVE a last path, you're reading from unitialized memory!
+ * so first let's initialize it.
+ * seems to have be fixed...remember to zero out things when you malloc them!
  */
 
 // for the love of christ keep things simple on this one.
@@ -321,6 +333,40 @@ Node tilemap_to_terminal_node(TileMapResult tilemap, uint tilesAcross)
     return result;
 }
 
+TileMapResult find_next_free_tile(TileMapResult pos, TILETYPE *tileMap, uint tilesAcross, uint tilesDown)
+{
+    //get index of current node?
+
+    int rect_radius = 1;
+
+    // increase the radius outwards
+
+
+    bool found = false;
+    TileMapResult bogusResult = pos;
+    // not efficient yet
+    while (!found) {
+	for (int x = -rect_radius; x <= rect_radius; x++) {
+	    for (int y = -rect_radius; y <= rect_radius; y++) {
+		TileMapResult toTest = {.x = pos.x + x, .y = pos.y + y};
+		if (free_tile(toTest, tileMap, tilesAcross)) {
+		    return toTest;
+		}
+	    }
+	
+	}
+	rect_radius += 1;
+	if (rect_radius >= tilesAcross || rect_radius >= tilesDown) {
+	    found = true;
+	}
+    }
+
+    // top left, top right
+    // bottom left, bottom right
+    // loop between them, how?
+    return bogusResult;
+}
+
 
 
 int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *tileMap, NodeArray *nodes, uint tilesAcross, uint tilesDown)
@@ -332,13 +378,21 @@ int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *
     
     // i don't think height is coming into play
 
-    // we should do
+    // we should do a check to see if the end point is actually a valid tile, and if not, pick a nearby one
+
+
+    // check if end node is valid
+    if (!free_tile(end, tileMap, tilesAcross)) {
+	// find next free tile
+	end = find_next_free_tile(end, tileMap, tilesAcross, tilesDown);
+    }
+    
+
     Node startNode = tilemap_to_terminal_node(start, tilesAcross);
     Node endNode = tilemap_to_terminal_node(end, tilesAcross);
     if (node_equals(startNode, endNode)) {
-	//
+	// this case should be handled correctly
     }
-    
     
     uint nodesAdded = 0;
     uint nodesSearched = 0;
@@ -457,6 +511,9 @@ int main(int argc, char **argv)
     nodeArray.count = 0;
     nodeArray.max = tilesAcross * tilesDown;
     nodeArray.nodes = malloc(nodeArray.max * sizeof(Node));
+    for (int i = 0; i < nodeArray.max; i++) {
+	nodeArray.nodes[i] = (Node){.predecessor = 0, .current = 0};
+    }
 
     Path pathArray;
     Path playerPathArray;
@@ -464,9 +521,12 @@ int main(int argc, char **argv)
     pathArray.max = tilesAcross * tilesDown;
     pathArray.len = 0;
 
-    playerPathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);
+    playerPathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);    
     playerPathArray.max = tilesAcross * tilesDown;
     playerPathArray.len = 0;
+    for (int i = 0; i < playerPathArray.max; i++) {
+	playerPathArray.indices[i] = 0;
+    }
     
     // Vector2 enemyDestinationTest = {.x = 550.0f, .y = 550.0f};
     Vector2 enemyDestinationTest = {.x = 32.0f, .y = 320.0f};
