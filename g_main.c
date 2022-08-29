@@ -10,12 +10,9 @@
 
 /*
  *TODO: 
+ * hand code a test tilemap
+ * start making a tilemap editor since I'll definitely need it
  
- *CURRENT BUG:
- * literal edge case bug where it freezes if I go to the edge
-
-
-
  * CLEAN the code: pick a style and stick to it
  * -refactor all the messiness
  * two bugs (at least):there's a out of bounds read (I think) on a tilemap index, it's when you pick an
@@ -32,6 +29,12 @@
 // this is a GAMEPLAY toybox.
 // graphics are BAD on this one
 // no shaders, no bs till the game is DONE
+
+// done my own pathfinding, now try
+// reading about A-Star
+// my current pathfinding is about 2KB per screen sized tilemap/path array
+// and that's actually excessive
+// so we can get about 500-ish concurrent paths per mb of ram, which is flenty
 
 // premise for this game is: Stalker / Diablo
 
@@ -55,9 +58,11 @@
 // your position to destination and then collision detect
 // the blockages, and then relax it to fit around the obstacles
 
+
+
 typedef enum {
-    GRASSTILE,
     BRICKTILE,
+    GRASSTILE,
     MUDTILE,
     DIRTTILE,
     NUMTILES,
@@ -93,6 +98,49 @@ typedef struct {
     uint max;
 } Path;
 
+typedef struct {
+    TILETYPE *tilemap;
+    uint tiles_across;
+    uint tiles_down;
+    uint tile_width;
+    uint tile_height;
+} TileMap;
+
+static TILETYPE g_tilemap[1000] = {
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,0,0,0,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,0,1,0,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,0,0,0,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
+    
+    
+
+};
+
 bool node_equals(Node n1, Node n2)
 {
     bool result = false;
@@ -105,21 +153,21 @@ bool node_equals(Node n1, Node n2)
     return result;
 }
 
-uint find_index_of_node(uint rawIndex, NodeArray nodeArray)
+uint find_index_of_node(uint raw_index, NodeArray node_array)
 {
-    for (int i = 0; i < nodeArray.count; i++) {
-	if (nodeArray.nodes[i].current == rawIndex) {
+    for (int i = 0; i < node_array.count; i++) {
+	if (node_array.nodes[i].current == raw_index) {
 	    return i;
 	}
     }
 }
 
 
-TileMapResult world_space_to_tilemap(float worldx, float worldy, uint width, uint height)
+TileMapResult world_space_to_tilemap(float world_x, float world_y, uint width, uint height)
 {
     TileMapResult result;
-    result.x = worldx / width;
-    result.y = worldy / height;
+    result.x = world_x / width;
+    result.y = world_y / height;
     return result;
 }
 
@@ -132,9 +180,9 @@ Vector2 tilemap_to_world_space(uint x, uint y, uint width, uint height)
     return result;
 }
 
-uint tilemap_to_index(TileMapResult tilemapResult, uint stride)
+uint tilemap_to_index(TileMapResult tilemap_result, uint stride)
 {
-    uint result = tilemapResult.x + tilemapResult.y * stride;
+    uint result = tilemap_result.x + tilemap_result.y * stride;
     return result;
 }
 
@@ -146,29 +194,29 @@ TileMapResult index_to_tilemap(uint index, uint stride)
     return result;
 }
 
-TILETYPE tilemap_to_type(TileMapResult tileMapResult, TILETYPE *tileMap, uint stride)
+TILETYPE tilemap_to_type(TileMapResult tilemap_result, TILETYPE *tilemap, uint stride)
 {
     // is that correct?
     // this should be tiles across not width
-    return tileMap[tileMapResult.x + tileMapResult.y*stride];
+    return tilemap[tilemap_result.x + tilemap_result.y*stride];
 }
 
-bool free_tile(TileMapResult tileMapResult, TILETYPE *tileMap, uint stride)
+bool free_tile(TileMapResult tilemap_result, TILETYPE *tilemap, uint stride)
 {
     // seems we are allowing ourselves to pass over brick tiles?
     bool result = true;
-    if (tilemap_to_type(tileMapResult, tileMap, stride) == BRICKTILE) {
+    if (tilemap_to_type(tilemap_result, tilemap, stride) == BRICKTILE) {
 	result = false;
     }
     return result;
 }
 
-NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, uint tilesDown)
+NeighbourResult get_neighbours(Node node, TILETYPE *tilemap, uint tiles_across, uint tiles_down)
 {
 
     // this could be a lot shorter
     NeighbourResult result;
-    TileMapResult nodeTile = index_to_tilemap(node.current, tilesAcross);
+    TileMapResult nodeTile = index_to_tilemap(node.current, tiles_across);
     uint x = nodeTile.x;
     uint y = nodeTile.y;
     // check edge cases
@@ -179,22 +227,22 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[3] = {t0, t1, t2};
 	int added = 0;
 	for (int i = 0; i < 3; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (x == tilesAcross && y == tilesDown) {
+    } else if (x == tiles_across && y == tiles_down) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y -1};
 	TileMapResult t2 = {.x = x, .y = y - 1};
 	TileMapResult tiles[3] = {t0, t1, t2};
 	int added = 0;
 	for (int i = 0; i < 3; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -210,14 +258,14 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (x == tilesAcross) {
+    } else if (x == tiles_across) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y + 1};
 	TileMapResult t2 = {.x = x, .y = y + 1};
@@ -228,8 +276,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -246,13 +294,14 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
+		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
 	}
 	result.count = added;
-    } else if (y == tilesDown) {
+    } else if (y == tiles_down) {
 	TileMapResult t0 = {.x = x - 1, .y = y};
 	TileMapResult t1 = {.x = x - 1, .y = y - 1};
 	TileMapResult t2 = {.x = x, .y = y - 1};
@@ -263,8 +312,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[5] = {t0, t1, t2, t3, t4};
 	int added = 0;
 	for (int i = 0; i < 5; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -283,8 +332,8 @@ NeighbourResult get_neighbours(Node node, TILETYPE *tileMap, uint tilesAcross, u
 	TileMapResult tiles[8] = {t0, t1, t2, t3, t4, t5, t6, t7};
 	int added = 0;
 	for (int i = 0; i < 8; i++) {
-	    if (free_tile(tiles[i], tileMap, tilesAcross)) {
-		result.neighbours[added].current = tilemap_to_index(tiles[i], tilesAcross);
+	    if (free_tile(tiles[i], tilemap, tiles_across)) {
+		result.neighbours[added].current = tilemap_to_index(tiles[i], tiles_across);
 		result.neighbours[added].predecessor = node.current;
 		added++;
 	    }
@@ -322,18 +371,18 @@ bool add_node(Node node, NodeArray *nodes)
     return true;
 }
 
-Node tilemap_to_terminal_node(TileMapResult tilemap, uint tilesAcross)
+Node tilemap_to_terminal_node(TileMapResult tilemap, uint tiles_across)
 {
     // turn a tilemap into a terminal node
     Node result;
-    uint index = tilemap_to_index(tilemap, tilesAcross);
+    uint index = tilemap_to_index(tilemap, tiles_across);
     result.current = index;
     result.predecessor = index;
 
     return result;
 }
 
-TileMapResult find_next_free_tile(TileMapResult pos, TILETYPE *tileMap, uint tilesAcross, uint tilesDown)
+TileMapResult find_next_free_tile(TileMapResult pos, TILETYPE *tilemap, uint tiles_across, uint tiles_down)
 {
     //get index of current node?
 
@@ -349,14 +398,14 @@ TileMapResult find_next_free_tile(TileMapResult pos, TILETYPE *tileMap, uint til
 	for (int x = -rect_radius; x <= rect_radius; x++) {
 	    for (int y = -rect_radius; y <= rect_radius; y++) {
 		TileMapResult toTest = {.x = pos.x + x, .y = pos.y + y};
-		if (free_tile(toTest, tileMap, tilesAcross)) {
+		if (free_tile(toTest, tilemap, tiles_across)) {
 		    return toTest;
 		}
 	    }
 	
 	}
 	rect_radius += 1;
-	if (rect_radius >= tilesAcross || rect_radius >= tilesDown) {
+	if (rect_radius >= tiles_across || rect_radius >= tiles_down) {
 	    found = true;
 	}
     }
@@ -369,8 +418,9 @@ TileMapResult find_next_free_tile(TileMapResult pos, TILETYPE *tileMap, uint til
 
 
 
-int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *tileMap, NodeArray *nodes, uint tilesAcross, uint tilesDown)
+int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *tilemap, NodeArray *nodes, uint tiles_across, uint tiles_down)
 {
+    // potential issue; will this tunnel through walls?
     int result = -1;
     
     // clear the NodeArray for use
@@ -382,161 +432,203 @@ int flood_fill_to_destination(TileMapResult start, TileMapResult end, TILETYPE *
 
 
     // check if end node is valid
-    if (!free_tile(end, tileMap, tilesAcross)) {
+    if (!free_tile(end, tilemap, tiles_across)) {
 	// find next free tile
-	end = find_next_free_tile(end, tileMap, tilesAcross, tilesDown);
+	end = find_next_free_tile(end, tilemap, tiles_across, tiles_down);
     }
     
 
-    Node startNode = tilemap_to_terminal_node(start, tilesAcross);
-    Node endNode = tilemap_to_terminal_node(end, tilesAcross);
-    if (node_equals(startNode, endNode)) {
+    Node start_node = tilemap_to_terminal_node(start, tiles_across);
+    Node end_node = tilemap_to_terminal_node(end, tiles_across);
+    if (node_equals(start_node, end_node)) {
 	// this case should be handled correctly
     }
     
-    uint nodesAdded = 0;
-    uint nodesSearched = 0;
-    add_node(startNode, nodes);
-    nodesAdded++;
+    uint nodes_added = 0;
+    uint nodes_searched = 0;
+    add_node(start_node, nodes);
+    nodes_added++;
 
-    Node endReconstruct;
+    Node end_reconstruct;
 
     bool destination_found = false;
 
     // possible off by one error here
-    while (!destination_found && nodesSearched < (nodes->max)) {
-	Node current = nodes->nodes[nodesSearched];
+    while (!destination_found && nodes_searched < (nodes->max)) {
+	// I think what we want to do is check if no nodes were added
+	// since last time, if so we should stop THEN
+	Node current = nodes->nodes[nodes_searched];
 
-	if (current.current == endNode.current) {
+	if (current.current == end_node.current) {
 	    destination_found = true;
 	    add_node(current, nodes);
-	    nodesAdded++;
+	    nodes_added++;
 	    break;
 	}
 	
 	//
-	NeighbourResult neighbourResult = get_neighbours(current, tileMap, tilesAcross, tilesDown);
-	for (int i = 0; i < neighbourResult.count; i++) {
-	    Node new = neighbourResult.neighbours[i];	    
-	    if (!contains_node(*nodes, new, nodesAdded)) {
+	NeighbourResult neighbour_result = get_neighbours(current, tilemap, tiles_across, tiles_down);
+	for (int i = 0; i < neighbour_result.count; i++) {
+	    Node new = neighbour_result.neighbours[i];	    
+	    if (!contains_node(*nodes, new, nodes_added)) {
 		add_node(new, nodes);
-		nodesAdded++;
+		nodes_added++;
 	    }
 	}
-	nodesSearched++;
+	nodes_searched++;
+
     }
 
     if (destination_found) {
-	result = nodesSearched;
+	result = nodes_searched;
     }
 
     return result;
 }
 
-void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int endIndex, uint tilesAcross)
+void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int end_index, uint tiles_across)
 {
     
-    Node currentNode = nodes.nodes[endIndex];
-    uint pathLen = 0;
-    bool countedPath = false;
-    uint startIndex = tilemap_to_index(start, tilesAcross);
+    Node current_node = nodes.nodes[end_index];
+    uint path_len = 0;
+    bool counted_path = false;
+    uint start_index = tilemap_to_index(start, tiles_across);
     // we need to figure out how long the path will actually be
-    while (!countedPath) {
-	if (currentNode.current == startIndex) {
-	    countedPath = true;
+    while (!counted_path) {
+	if (current_node.current == start_index) {
+	    counted_path = true;
 	} else {
-	    pathLen++;
+	    path_len++;
 	    // we could instead store the position when we place it, would be better
-	    currentNode = nodes.nodes[find_index_of_node(currentNode.predecessor, nodes)];
+	    current_node = nodes.nodes[find_index_of_node(current_node.predecessor, nodes)];
 	}
     }
     
-    path->len = pathLen;
-    currentNode = nodes.nodes[endIndex];
-    for (int i = pathLen; i >= 0; i--) {
-	path->indices[i] = currentNode.current;
-	currentNode = nodes.nodes[find_index_of_node(currentNode.predecessor, nodes)];
+    path->len = path_len;
+    current_node = nodes.nodes[end_index];
+    for (int i = path_len; i >= 0; i--) {
+	path->indices[i] = current_node.current;
+	current_node = nodes.nodes[find_index_of_node(current_node.predecessor, nodes)];
     }
     // so we can THEN do a countdown-add to the path, set its length appropriately and use that later
 }
 
+void draw_tilemap(TileMap tilemap)
+{
+    // slower but easier to read
+    // and compiler should clean it up anyway
+    uint tiles_down = tilemap.tiles_down;
+    uint tiles_across = tilemap.tiles_across;
+    uint tile_width = tilemap.tile_width;
+    uint tile_height = tilemap.tile_height;
+    
+    for (int y = 0; y < tiles_down; y++) {
+	for (int x = 0; x < tiles_across; x++) {
+	    TILETYPE tile = tilemap.tilemap[y*tiles_across + x];
+	    if (tile == GRASSTILE) {
+		DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, GREEN);
+	    }
+	    if (tile == BRICKTILE) {
+		DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, PINK);
+	    }
+	    if (tile == MUDTILE) {
+		DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, DARKBROWN);
+	    }
+	    if (tile == DIRTTILE) {
+		DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, BEIGE);
+	    }
+	}
+    }
+}
+
 int main(int argc, char **argv)
 {
-    const int screenWidth = 1280;
-    const int screenHeight = 720;
+    const int screen_width = 1280;
+    const int screen_height = 800;
     
-    float gameTimer = 0.0f;
+    float game_timer = 0.0f;
     
     SetWindowState(FLAG_VSYNC_HINT);
-    InitWindow(screenWidth, screenHeight, "Through A Dark Meadow");
+    InitWindow(screen_width, screen_height, "Through A Dark Meadow");
     HideCursor();
 
     SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
 
     InitAudioDevice();
     
-    float targetMsPerFrame = 1.0f/60.0f;
+    float target_ms_per_frame = 1.0f/60.0f;
 
-    Vector2 playerPosition = {.x = screenWidth/2.0f, .y = screenHeight/2.0f};
-    Vector2 playerDestination = {.x = playerPosition.x, .y = playerPosition.y};
-    Vector2 playerVelocity = {.x = 0.0f, .y = 0.0f};
-    Vector2 playerHeading= {.x = 0.0f, .y = 0.0f};
+    Vector2 player_position = {.x = screen_width/2.0f, .y = screen_height/2.0f};
+    Vector2 player_destination = {.x = player_position.x, .y = player_position.y};
+    Vector2 player_velocity = {.x = 0.0f, .y = 0.0f};
+    Vector2 player_heading= {.x = 0.0f, .y = 0.0f};
 
-    Vector2 enemyPosition = {.x = 600.0f, .y = 400.0f};
+    Vector2 enemy_position = {.x = 600.0f, .y = 400.0f};
 
-    int enemyHealth = 100;
+    int enemy_health = 100;
 
-    bool playerAttacking = false;
+    bool player_attacking = false;
 
-    float playerAttackRadius = 20.0f;
+    float player_attack_radius = 20.0f;
 
     Sound rainSound = LoadSound("sound/rain-07.wav");
 
-    uint tileWidth = 32;
-    uint tileHeight = 32;    
-    uint tilesAcross = screenWidth / tileWidth;
-    uint tilesDown = screenHeight / tileHeight;
+    uint tile_width = 32;
+    uint tile_height = 32;    
+    //uint tiles_across = screen_width / tile_width;
+    //uint tiles_down = screen_height / tile_height;
+
+    uint tiles_across = 40;
+    uint tiles_down = 25;
     
-    TILETYPE *tileMap = malloc(sizeof *tileMap * tilesAcross * tilesDown);
-    for (int j = 0; j < tilesDown; j++) {
-	for (int i = 0; i < tilesAcross; i++) {
-	    int randTile = rand() % NUMTILES;
-	    tileMap[j*tilesAcross + i] = randTile;
+    TILETYPE *tilemap = malloc(sizeof *tilemap * tiles_across * tiles_down);
+    for (int j = 0; j < tiles_down; j++) {
+	for (int i = 0; i < tiles_across; i++) {
+	    int rand_tile = rand() % NUMTILES;
+	    //tilemap[j*tiles_across + i] = rand_tile;
+	    tilemap[j*tiles_across + i] = g_tilemap[j*tiles_across + i];
 	}
     }
 
+    TileMap tilemap_t = {.tilemap = tilemap,
+	.tiles_across = tiles_across,
+	.tiles_down = tiles_down,
+	.tile_width = tile_width,
+	.tile_height = tile_height
+    };
+
     // some test destinations for the enemy navigation
     
-    NodeArray nodeArray;
-    nodeArray.count = 0;
-    nodeArray.max = tilesAcross * tilesDown;
-    nodeArray.nodes = malloc(nodeArray.max * sizeof(Node));
-    for (int i = 0; i < nodeArray.max; i++) {
-	nodeArray.nodes[i] = (Node){.predecessor = 0, .current = 0};
+    NodeArray node_array;
+    node_array.count = 0;
+    node_array.max = tiles_across * tiles_down;
+    node_array.nodes = malloc(node_array.max * sizeof(Node));
+    for (int i = 0; i < node_array.max; i++) {
+	node_array.nodes[i] = (Node){.predecessor = 0, .current = 0};
     }
 
-    Path pathArray;
-    Path playerPathArray;
-    pathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);
-    pathArray.max = tilesAcross * tilesDown;
-    pathArray.len = 0;
+    Path path_array;
+    Path player_path_array;
+    path_array.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
+    path_array.max = tiles_across * tiles_down;
+    path_array.len = 0;
 
-    playerPathArray.indices = malloc(sizeof(uint) * tilesAcross * tilesDown);    
-    playerPathArray.max = tilesAcross * tilesDown;
-    playerPathArray.len = 0;
-    for (int i = 0; i < playerPathArray.max; i++) {
-	playerPathArray.indices[i] = 0;
+    player_path_array.indices = malloc(sizeof(uint) * tiles_across * tiles_down);    
+    player_path_array.max = tiles_across * tiles_down;
+    player_path_array.len = 0;
+    for (int i = 0; i < player_path_array.max; i++) {
+	player_path_array.indices[i] = 0;
     }
     
     // Vector2 enemyDestinationTest = {.x = 550.0f, .y = 550.0f};
-    Vector2 enemyDestinationTest = {.x = 32.0f, .y = 320.0f};
-    int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight),
-						 world_space_to_tilemap(enemyDestinationTest.x, enemyDestinationTest.y, tileWidth, tileHeight),
-						 tileMap,
-						 &nodeArray, tilesAcross, tilesDown);
+    Vector2 enemy_destination_test = {.x = 32.0f, .y = 320.0f};
+    int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height),
+						 world_space_to_tilemap(enemy_destination_test.x, enemy_destination_test.y, tile_width, tile_height),
+						 tilemap,
+						 &node_array, tiles_across, tiles_down);
     if (flood_result != -1) {
-	reconstruct_path(&pathArray, nodeArray, world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight),
-		     flood_result, tilesAcross);
+	reconstruct_path(&path_array, node_array, world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height),
+		     flood_result, tiles_across);
     }
     
     uint enemy_path_counter = 0;
@@ -558,24 +650,24 @@ int main(int argc, char **argv)
         
         
         
-        float playerSpeed = 20.0f;
-        float maxSpeed = 150.0f;
+        float player_speed = 20.0f;
+        float max_speed = 150.0f;
         
-        playerAttacking = false;
+        player_attacking = false;
        
-        struct Vector2 mousePos = {.x = GetMouseX(), .y = GetMouseY()};
+        struct Vector2 mouse_pos = {.x = GetMouseX(), .y = GetMouseY()};
        
         if (IsMouseButtonPressed(0)) {
 	    player_path_counter = 0;
-            playerDestination = (Vector2){.x = mousePos.x, .y = mousePos.y};
+            player_destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
 	    
 	    // maybe not the most efficient thing to do?
-	    TileMapResult tempTileMapDest = world_space_to_tilemap(playerDestination.x, playerDestination.y, tileWidth, tileHeight);
-	    TileMapResult tempTileMapCurrent = world_space_to_tilemap(playerPosition.x, playerPosition.y, tileWidth, tileHeight);
-	    nodeArray.count = 0;
-	    int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tileMap, &nodeArray, tilesAcross, tilesDown);
+	    TileMapResult tempTileMapDest = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
+	    TileMapResult tempTileMapCurrent = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
+	    node_array.count = 0;
+	    int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tilemap, &node_array, tiles_across, tiles_down);
 	    if (floodResult != -1) {
-		reconstruct_path(&playerPathArray, nodeArray, tempTileMapCurrent, floodResult, tilesAcross);
+		reconstruct_path(&player_path_array, node_array, tempTileMapCurrent, floodResult, tiles_across);
 	    } else {
 	    }
 	    
@@ -584,82 +676,82 @@ int main(int argc, char **argv)
             
         }	
 	if (IsMouseButtonPressed(1)) {
-	    playerAttacking = true;
+	    player_attacking = true;
             
         }
 
 	
         
-        float dtToUse = min(dt, targetMsPerFrame);
+        float dtToUse = min(dt, target_ms_per_frame);
     
-        if (Vector2Distance(playerPosition, playerDestination) > 3.0f) {
-	    TileMapResult player_path_tile = index_to_tilemap(playerPathArray.indices[player_path_counter], tilesAcross);
-	    Vector2 player_path_vec = tilemap_to_world_space(player_path_tile.x, player_path_tile.y , tileWidth, tileHeight);
-	    playerHeading = Vector2Subtract(player_path_vec, playerPosition);
-	    playerHeading = Vector2Normalize(playerHeading);
-	    if (Vector2Distance(playerPosition, player_path_vec) > 3.0f) {
-		playerPosition = Vector2Add(playerPosition, Vector2Scale(playerHeading, dtToUse * 50.0f));
+        if (Vector2Distance(player_position, player_destination) > 3.0f) {
+	    TileMapResult player_path_tile = index_to_tilemap(player_path_array.indices[player_path_counter], tiles_across);
+	    Vector2 player_path_vec = tilemap_to_world_space(player_path_tile.x, player_path_tile.y , tile_width, tile_height);
+	    player_heading = Vector2Subtract(player_path_vec, player_position);
+	    player_heading = Vector2Normalize(player_heading);
+	    if (Vector2Distance(player_position, player_path_vec) > 3.0f) {
+		player_position = Vector2Add(player_position, Vector2Scale(player_heading, dtToUse * 50.0f));
 	    }
-	    if (Vector2Distance(playerPosition, player_path_vec) < 3.0f && player_path_counter < playerPathArray.len) {
+	    if (Vector2Distance(player_position, player_path_vec) < 3.0f && player_path_counter < player_path_array.len) {
 		player_path_counter++;
 	    }
 		
 
 	    #if 0
-            playerHeading = Vector2Subtract(playerDestination, playerPosition);
-            playerHeading = Vector2Normalize(playerHeading);
+            player_heading = Vector2Subtract(player_destination, player_position);
+            player_heading = Vector2Normalize(player_heading);
             
-            playerVelocity = Vector2Add(playerVelocity, Vector2Scale(playerHeading, playerSpeed));
-            if (Vector2Length(playerVelocity) > maxSpeed) {
-                playerVelocity = Vector2Normalize(playerVelocity);
-                playerVelocity = Vector2Scale(playerVelocity, maxSpeed);
+            player_velocity = Vector2Add(player_velocity, Vector2Scale(player_heading, player_speed));
+            if (Vector2Length(player_velocity) > max_speed) {
+                player_velocity = Vector2Normalize(player_velocity);
+                player_velocity = Vector2Scale(player_velocity, max_speed);
             }
             
-            //playerVelocity = Vector2Normalize(playerVelocity);
+            //player_velocity = Vector2Normalize(player_velocity);
             
-            if (Vector2Length(playerVelocity) > 5.0f) {
-            playerPosition = Vector2Add(playerPosition, Vector2Scale(playerVelocity, dtToUse));
+            if (Vector2Length(player_velocity) > 5.0f) {
+            player_position = Vector2Add(player_position, Vector2Scale(player_velocity, dtToUse));
             } else {
-                if (Vector2Length(playerVelocity) > 2.0f) {
-                    playerVelocity = Vector2Add(playerVelocity, Vector2Scale(playerVelocity, -0.5f));
+                if (Vector2Length(player_velocity) > 2.0f) {
+                    player_velocity = Vector2Add(player_velocity, Vector2Scale(player_velocity, -0.5f));
                 } else {
-                    playerVelocity = (Vector2){.x = 0.0f, .y = 0.0f};
+                    player_velocity = (Vector2){.x = 0.0f, .y = 0.0f};
                 }
             }
 	    #endif
         } else {
-	    playerVelocity = (Vector2){.x = 0.0f, .y = 0.0f};
+	    player_velocity = (Vector2){.x = 0.0f, .y = 0.0f};
 	}
 
-	TileMapResult playerTileMap = world_space_to_tilemap(playerPosition.x, playerPosition.y, tileWidth, tileHeight);
-	TileMapResult mouseTileMap = world_space_to_tilemap(mousePos.x, mousePos.y, tileWidth, tileHeight);
-	TileMapResult destinationTileMap = world_space_to_tilemap(playerDestination.x, playerDestination.y, tileWidth, tileHeight);
+	TileMapResult player_tilemap = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
+	TileMapResult mouse_tilemap = world_space_to_tilemap(mouse_pos.x, mouse_pos.y, tile_width, tile_height);
+	TileMapResult destination_tilemap = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
 
-	if ((Vector2Distance(playerPosition, enemyPosition) < playerAttackRadius)
-	    && playerAttacking) {
-	    enemyHealth--;
+	if ((Vector2Distance(player_position, enemy_position) < player_attack_radius)
+	    && player_attacking) {
+	    enemy_health--;
 	}
 
 	
             
         //dt -= dtToUse;
-        //gameTimer += dtToUse;
+        //game_timer += dtToUse;
             
         
         
-        TileMapResult enemy_path_tile = index_to_tilemap(pathArray.indices[enemy_path_counter], tilesAcross);
+        TileMapResult enemy_path_tile = index_to_tilemap(path_array.indices[enemy_path_counter], tiles_across);
 
 
 	
-	Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tileWidth, tileHeight);
-	Vector2 enemy_heading_vec = Vector2Subtract(enemy_path_vec, enemyPosition);
+	Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tile_width, tile_height);
+	Vector2 enemy_heading_vec = Vector2Subtract(enemy_path_vec, enemy_position);
 
-	TileMapResult enemy_current_tile = world_space_to_tilemap(enemyPosition.x, enemyPosition.y, tileWidth, tileHeight);
+	TileMapResult enemy_current_tile = world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height);
 	enemy_heading_vec = Vector2Normalize(enemy_heading_vec);
-	if (Vector2Distance(enemyPosition, enemy_path_vec) > 3.0f) {
-	    enemyPosition = Vector2Add(enemyPosition, Vector2Scale(enemy_heading_vec, dtToUse * 50.0f));
+	if (Vector2Distance(enemy_position, enemy_path_vec) > 3.0f) {
+	    enemy_position = Vector2Add(enemy_position, Vector2Scale(enemy_heading_vec, dtToUse * 50.0f));
 	}
-	if (Vector2Distance(enemyPosition, enemy_path_vec) < 3.0f && enemy_path_counter < pathArray.len) {
+	if (Vector2Distance(enemy_position, enemy_path_vec) < 3.0f && enemy_path_counter < path_array.len) {
 	    enemy_path_counter++;
 	}
         
@@ -684,43 +776,45 @@ int main(int argc, char **argv)
      
         
         DrawFPS(30, 30);
-
-	for (int y = 0; y < tilesDown; y++) {
-	    for (int x = 0; x < tilesAcross; x++) {
-		TILETYPE tile = tileMap[y*tilesAcross + x];
+	#if 0
+	for (int y = 0; y < tiles_down; y++) {
+	    for (int x = 0; x < tiles_across; x++) {
+		TILETYPE tile = tilemap[y*tiles_across + x];
 		if (tile == GRASSTILE) {
-		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, GREEN);
+		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, GREEN);
 		}
 		if (tile == BRICKTILE) {
-		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, PINK);
+		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, PINK);
 		}
 		if (tile == MUDTILE) {
-		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, DARKBROWN);
+		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, DARKBROWN);
 		}
 		if (tile == DIRTTILE) {
-		    DrawRectangle(x * tileWidth, y * tileHeight, tileWidth, tileHeight, BEIGE);
+		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, BEIGE);
 		}
 	    }
 	}
-	for (int i = 0; i <= pathArray.len; i++) {
-	    TileMapResult debugTile = index_to_tilemap(pathArray.indices[i], tilesAcross);
-	    DrawRectangleLines(debugTile.x * tileWidth, debugTile.y * tileHeight, tileWidth, tileHeight, YELLOW);
+	#endif
+	draw_tilemap(tilemap_t);
+	for (int i = 0; i <= path_array.len; i++) {
+	    TileMapResult debugTile = index_to_tilemap(path_array.indices[i], tiles_across);
+	    DrawRectangleLines(debugTile.x * tile_width, debugTile.y * tile_height, tile_width, tile_height, YELLOW);
 	}
 	
-	DrawRectangleLines(enemy_current_tile.x * tileWidth, enemy_current_tile.y * tileHeight, tileWidth, tileHeight, RED);
-	DrawRectangleLines(playerTileMap.x * tileWidth, playerTileMap.y * tileHeight, tileWidth, tileHeight, RED);
-	DrawRectangleLines(mouseTileMap.x * tileWidth, mouseTileMap.y * tileHeight, tileWidth, tileHeight, YELLOW);
-	DrawRectangleLines(destinationTileMap.x * tileWidth, destinationTileMap.y * tileHeight, tileWidth, tileHeight, PINK);
+	DrawRectangleLines(enemy_current_tile.x * tile_width, enemy_current_tile.y * tile_height, tile_width, tile_height, RED);
+	DrawRectangleLines(player_tilemap.x * tile_width, player_tilemap.y * tile_height, tile_width, tile_height, RED);
+	DrawRectangleLines(mouse_tilemap.x * tile_width, mouse_tilemap.y * tile_height, tile_width, tile_height, YELLOW);
+	DrawRectangleLines(destination_tilemap.x * tile_width, destination_tilemap.y * tile_height, tile_width, tile_height, PINK);
 
-	DrawCircle(playerPosition.x, playerPosition.y, 10, RAYWHITE);
+	DrawCircle(player_position.x, player_position.y, 10, RAYWHITE);
 
 	
-	DrawCircle(enemyPosition.x, enemyPosition.y, 10, BLUE);
+	DrawCircle(enemy_position.x, enemy_position.y, 10, BLUE);
         
         
-        DrawCircleLines(mousePos.x, mousePos.y, 5, LIGHTGRAY);
+        DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
 
-	for (int i = 0; i < enemyHealth; i++) {
+	for (int i = 0; i < enemy_health; i++) {
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
 	    //
 	}
