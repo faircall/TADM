@@ -10,17 +10,18 @@
 
 /*
  *TODO: 
- * hand code a test tilemap
  * start making a tilemap editor since I'll definitely need it
  
- * CLEAN the code: pick a style and stick to it
+ 
+
  * -refactor all the messiness
- * two bugs (at least):there's a out of bounds read (I think) on a tilemap index, it's when you pick an
- * invalid tile as your first destination on game startup...but only sometimes?
- * second is that clicking on an invalid tile just uses your last path...
- * ok, so that would mean that if you don't HAVE a last path, you're reading from unitialized memory!
- * so first let's initialize it.
- * seems to have be fixed...remember to zero out things when you malloc them!
+
+
+
+
+
+
+ * handle invalid paths properly
  */
 
 // for the love of christ keep things simple on this one.
@@ -105,6 +106,18 @@ typedef struct {
     uint tile_width;
     uint tile_height;
 } TileMap;
+
+typedef struct {
+    Vector2 position;
+    Vector2 destination;
+    Vector2 heading;
+    uint path_counter;
+    float speed;
+    float max_speed;
+    bool attacking;
+    Path path;
+    
+} Player;
 
 static TILETYPE g_tilemap[1000] = {
     1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
@@ -513,6 +526,10 @@ void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int end_
     // so we can THEN do a countdown-add to the path, set its length appropriately and use that later
 }
 
+void update_player(Player *player, float dt, NodeArray *node_array, TILETYPE *tilemap)
+{
+}
+
 void draw_tilemap(TileMap tilemap)
 {
     // slower but easier to read
@@ -540,6 +557,20 @@ void draw_tilemap(TileMap tilemap)
 	}
     }
 }
+
+void update_player();
+
+void update_enemies();
+
+void draw_player();
+
+void draw_enemies();
+
+void draw_ui();
+
+int save_map();
+
+int load_map();
 
 int main(int argc, char **argv)
 {
@@ -635,18 +666,136 @@ int main(int argc, char **argv)
 
     uint player_path_counter = 0;
 
+    bool editing_mode = false;
+    bool recently_shifted_modes = false;
+    bool save_mode = false;
+    float recent_timer = 0.0f;
+    float recent_timer_max = 2.0f;
+
+    char filename_buffer[512];    
+    for (int i = 0; i < 512; i++) {
+	filename_buffer[i] = '\0';
+    }
+    char *default_filename = "new";
+    uint filename_counter = 0;
+
+    bool load_mode = false;
+
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
+	float dt = GetFrameTime();
+	float dtToUse = min(dt, target_ms_per_frame);
 	// sound stuff
 	if (!IsSoundPlaying(rainSound)) {
 	    PlaySound(rainSound);
 	}
-	
-        // Update
-        //----------------------------------------------------------------------------------
-        // TODO: Update your variables here
-        //----------------------------------------------------------------------------------
-        float dt = GetFrameTime();
+
+	if (IsKeyPressed(KEY_E) && !save_mode) {
+	    editing_mode = !editing_mode;
+	    recently_shifted_modes = true;
+	    recent_timer = 0.0f;
+	}
+
+	if (IsKeyPressed(KEY_S) && editing_mode && !save_mode) {
+	    // need to perform a save
+	    // prompt for filename?
+	    // that comes later
+	    save_mode = true;
+	    memcpy(filename_buffer, default_filename, strlen(default_filename));
+	    filename_counter = strlen(default_filename) - 1;
+	    while ((GetCharPressed()) != 0) {
+		// clear the input buffer
+	    }
+	}
+
+	if (IsKeyPressed(KEY_L) && editing_mode && !save_mode) {
+	    load_mode = true;
+	    while ((GetCharPressed()) != 0) {
+		// clear the input bufffer
+	    }
+	}
+
+	if (load_mode) {
+	    if (IsKeyPressed(KEY_BACKSPACE)) {
+		
+		filename_buffer[filename_counter] = '\0';
+		if (filename_counter > 0) {
+		    filename_counter--;
+		}
+	    }
+	    int key_pressed = 0;
+	    while ((key_pressed = GetCharPressed()) != 0) {
+		filename_buffer[filename_counter] = key_pressed;
+		filename_counter++;
+	    }
+	    
+	    if (IsKeyPressed(KEY_ENTER)) {
+		// do a save
+		FILE *save_fp;
+		
+		errno_t err = fopen_s(&save_fp, filename_buffer, "rb+");
+		if (err) {
+		    printf("something went wrong\n");
+		}
+
+		// I think we need to write individually
+		fread((void*)&(tilemap_t.tiles_across), sizeof(tilemap_t.tiles_across), 1, save_fp);
+		//fseek(save_fp, sizeof(tilemap_t.tiles_across), SEEK_CUR);
+		fread((void*)&(tilemap_t.tiles_down), sizeof(tilemap_t.tiles_down), 1, save_fp);
+		//fseek(save_fp, sizeof(tilemap_t.tiles_down), SEEK_CUR);
+		fread((void*)&(tilemap_t.tile_width), sizeof(tilemap_t.tile_width), 1, save_fp);
+		//fseek(save_fp, sizeof(tilemap_t.tile_width), SEEK_CUR);
+		fread((void*)&(tilemap_t.tile_height), sizeof(tilemap_t.tile_height), 1, save_fp);
+		//fseek(save_fp, sizeof(tilemap_t.tile_height), SEEK_CUR);
+		fread((void*)(tilemap_t.tilemap), tilemap_t.tiles_across*tilemap_t.tiles_down*sizeof(TILETYPE), 1, save_fp);
+		
+		fclose(save_fp);
+		load_mode = false;
+	    }
+	}
+
+	if (save_mode) {
+
+	    if (IsKeyPressed(KEY_BACKSPACE)) {
+		
+		filename_buffer[filename_counter] = '\0';
+		if (filename_counter > 0) {
+		    filename_counter--;
+		}
+	    }
+	    int key_pressed = 0;
+	    while ((key_pressed = GetCharPressed()) != 0) {
+		filename_buffer[filename_counter] = key_pressed;
+		filename_counter++;
+	    }
+
+	    
+	    if (IsKeyPressed(KEY_ENTER)) {
+		// do a save
+		FILE *save_fp;
+		
+		errno_t err = fopen_s(&save_fp, filename_buffer, "wb+");
+		if (err) {
+		    printf("something went wrong\n");
+		}
+
+		// I think we need to write individually
+		fwrite((void*)&(tilemap_t.tiles_across), sizeof(tilemap_t.tiles_across), 1, save_fp);
+		fwrite((void*)&(tilemap_t.tiles_down), sizeof(tilemap_t.tiles_down), 1, save_fp);
+		fwrite((void*)&(tilemap_t.tile_width), sizeof(tilemap_t.tile_width), 1, save_fp);
+		fwrite((void*)&(tilemap_t.tile_height), sizeof(tilemap_t.tile_height), 1, save_fp);
+		fwrite((void*)(tilemap_t.tilemap), tilemap_t.tiles_across*tilemap_t.tiles_down*sizeof(TILETYPE), 1, save_fp);
+		
+		fclose(save_fp);
+		
+		save_mode = false;
+	    }
+	    
+	}
+
+
+	// really need an 'update world' function here
+
         
         
         
@@ -656,21 +805,32 @@ int main(int argc, char **argv)
         player_attacking = false;
        
         struct Vector2 mouse_pos = {.x = GetMouseX(), .y = GetMouseY()};
+
+
        
         if (IsMouseButtonPressed(0)) {
-	    player_path_counter = 0;
-            player_destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
-	    
-	    // maybe not the most efficient thing to do?
-	    TileMapResult tempTileMapDest = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
-	    TileMapResult tempTileMapCurrent = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
-	    node_array.count = 0;
-	    int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tilemap, &node_array, tiles_across, tiles_down);
-	    if (floodResult != -1) {
-		reconstruct_path(&player_path_array, node_array, tempTileMapCurrent, floodResult, tiles_across);
+
+	    if (editing_mode) {
+		TileMapResult tilemap_to_change = world_space_to_tilemap(mouse_pos.x, mouse_pos.y, tile_width, tile_height);
+		tilemap_t.tilemap[tilemap_to_change.y * tiles_across + tilemap_to_change.x] = (tilemap_t.tilemap[tilemap_to_change.y * tiles_across + tilemap_to_change.x] + 1) % NUMTILES;
 	    } else {
-	    }
 	    
+		player_path_counter = 0;
+		player_destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
+	    
+		// maybe not the most efficient thing to do?
+		TileMapResult tempTileMapDest = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
+		TileMapResult tempTileMapCurrent = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
+		node_array.count = 0;
+		int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tilemap, &node_array, tiles_across, tiles_down);
+		if (floodResult != -1) {
+
+		    reconstruct_path(&player_path_array, node_array, tempTileMapCurrent, floodResult, tiles_across);
+		} else {
+		    // set should move = false?
+
+		}
+	    }
             
             
             
@@ -682,9 +842,9 @@ int main(int argc, char **argv)
 
 	
         
-        float dtToUse = min(dt, target_ms_per_frame);
+	bool player_should_move = true;
     
-        if (Vector2Distance(player_position, player_destination) > 3.0f) {
+        if (Vector2Distance(player_position, player_destination) > 3.0f && player_should_move) {
 	    TileMapResult player_path_tile = index_to_tilemap(player_path_array.indices[player_path_counter], tiles_across);
 	    Vector2 player_path_vec = tilemap_to_world_space(player_path_tile.x, player_path_tile.y , tile_width, tile_height);
 	    player_heading = Vector2Subtract(player_path_vec, player_position);
@@ -697,28 +857,7 @@ int main(int argc, char **argv)
 	    }
 		
 
-	    #if 0
-            player_heading = Vector2Subtract(player_destination, player_position);
-            player_heading = Vector2Normalize(player_heading);
-            
-            player_velocity = Vector2Add(player_velocity, Vector2Scale(player_heading, player_speed));
-            if (Vector2Length(player_velocity) > max_speed) {
-                player_velocity = Vector2Normalize(player_velocity);
-                player_velocity = Vector2Scale(player_velocity, max_speed);
-            }
-            
-            //player_velocity = Vector2Normalize(player_velocity);
-            
-            if (Vector2Length(player_velocity) > 5.0f) {
-            player_position = Vector2Add(player_position, Vector2Scale(player_velocity, dtToUse));
-            } else {
-                if (Vector2Length(player_velocity) > 2.0f) {
-                    player_velocity = Vector2Add(player_velocity, Vector2Scale(player_velocity, -0.5f));
-                } else {
-                    player_velocity = (Vector2){.x = 0.0f, .y = 0.0f};
-                }
-            }
-	    #endif
+	
         } else {
 	    player_velocity = (Vector2){.x = 0.0f, .y = 0.0f};
 	}
@@ -776,25 +915,7 @@ int main(int argc, char **argv)
      
         
         DrawFPS(30, 30);
-	#if 0
-	for (int y = 0; y < tiles_down; y++) {
-	    for (int x = 0; x < tiles_across; x++) {
-		TILETYPE tile = tilemap[y*tiles_across + x];
-		if (tile == GRASSTILE) {
-		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, GREEN);
-		}
-		if (tile == BRICKTILE) {
-		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, PINK);
-		}
-		if (tile == MUDTILE) {
-		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, DARKBROWN);
-		}
-		if (tile == DIRTTILE) {
-		    DrawRectangle(x * tile_width, y * tile_height, tile_width, tile_height, BEIGE);
-		}
-	    }
-	}
-	#endif
+
 	draw_tilemap(tilemap_t);
 	for (int i = 0; i <= path_array.len; i++) {
 	    TileMapResult debugTile = index_to_tilemap(path_array.indices[i], tiles_across);
@@ -818,9 +939,25 @@ int main(int argc, char **argv)
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
 	    //
 	}
-     
+
+
+	// debug drawing
+	if (recently_shifted_modes) {
+	    recent_timer += dtToUse;
+	    if (editing_mode) {
+		DrawText("editing mode", 10, 10, 14, BLACK);
+	    } else {
+		DrawText("not editing mode", 10, 10, 14, BLACK);
+	    }
+
+	    if (recent_timer >= recent_timer_max) {
+		recently_shifted_modes = false;
+	    }
+	}
             
-            
+        if (save_mode || load_mode) {
+	    DrawText(filename_buffer, screen_width - 100, 10, 14, BLACK);
+	}
             
            
                 
