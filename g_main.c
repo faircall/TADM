@@ -12,7 +12,10 @@
  *TODO: 
  * start making a tilemap editor since I'll definitely need it
  
- 
+ *brain for enemy
+
+ *random idea
+ *enemies can get possessed by more intelligent daemons
 
  * -refactor all the messiness
 
@@ -22,6 +25,8 @@
 
 
  * handle invalid paths properly
+ * one way is do a raycast
+ * or some sorta flood fill outward to find a proper tile
  */
 
 // for the love of christ keep things simple on this one.
@@ -40,10 +45,7 @@
 // premise for this game is: Stalker / Diablo
 
 
-// brain for enemy
 
-// random idea
-// enemies can get possessed by more intelligent daemons
 
 // end the session with refactoring
 
@@ -119,6 +121,11 @@ typedef struct {
     
 } Player;
 
+typedef struct {
+    bool hit;
+    Vector2 position;
+} RaycastResult;
+
 static TILETYPE g_tilemap[1000] = {
     1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
     1,1,1,1,1,1,1,1,1,1,    1,1,1,1,0,0,0,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
@@ -153,6 +160,17 @@ static TILETYPE g_tilemap[1000] = {
     
 
 };
+
+bool out_of_screen(Vector2 pos, int screen_width, int screen_height)
+{
+    if (pos.x < 0.0f ||
+	pos.x > screen_width ||
+	pos.y < 0.0f ||
+	pos.y > screen_height) {
+	return true;
+    }
+    return false;
+}
 
 bool node_equals(Node n1, Node n2)
 {
@@ -214,6 +232,13 @@ TILETYPE tilemap_to_type(TileMapResult tilemap_result, TILETYPE *tilemap, uint s
     return tilemap[tilemap_result.x + tilemap_result.y*stride];
 }
 
+TILETYPE world_space_to_type(TileMap tilemap, float world_x, float world_y)
+{
+    TileMapResult map_result = world_space_to_tilemap(world_x, world_y, tilemap.tile_width, tilemap.tile_height);
+    TILETYPE result = tilemap_to_type(map_result, tilemap.tilemap, tilemap.tiles_across);
+    return result;
+}
+
 bool free_tile(TileMapResult tilemap_result, TILETYPE *tilemap, uint stride)
 {
     // seems we are allowing ourselves to pass over brick tiles?
@@ -222,6 +247,14 @@ bool free_tile(TileMapResult tilemap_result, TILETYPE *tilemap, uint stride)
 	result = false;
     }
     return result;
+}
+
+bool tilemap_equals(TileMapResult t1, TileMapResult t2)
+{
+    if ((t1.x == t2.x) && (t1.y == t2.y)) {
+	return true;
+    }
+    return false;
 }
 
 NeighbourResult get_neighbours(Node node, TILETYPE *tilemap, uint tiles_across, uint tiles_down)
@@ -572,6 +605,33 @@ int save_map();
 
 int load_map();
 
+RaycastResult raycast(TileMap tilemap, Vector2 start, Vector2 direction, Vector2 target, float length, int screen_width, int screen_height)
+{
+    RaycastResult result = {.position = {.x = start.x, .y = start.y},
+	.hit = false};
+
+    TileMapResult target_tile = world_space_to_tilemap(target.x, target.y, tilemap.tile_width, tilemap.tile_height);
+    for (float t = 0.0f; t += 0.5f; t <= length) {
+	// maybe better to start at .5?
+	result.position = Vector2Add(start, Vector2Scale(direction, t));
+	if (out_of_screen(result.position, screen_width, screen_height)) {
+	    return result;
+	}
+	// need to check for casting outside the screen
+	TileMapResult position_tile = world_space_to_tilemap(result.position.x, result.position.y, tilemap.tile_width, tilemap.tile_height);
+	
+	TILETYPE tile = world_space_to_type(tilemap, result.position.x, result.position.y);
+	if (tile == BRICKTILE) {
+	    return result;
+	}
+	if (tilemap_equals(position_tile, target_tile)) {
+	    result.hit = true;
+	    return result;
+	}
+    }
+    return result;	
+}
+
 int main(int argc, char **argv)
 {
     const int screen_width = 1280;
@@ -893,6 +953,8 @@ int main(int argc, char **argv)
 	if (Vector2Distance(enemy_position, enemy_path_vec) < 3.0f && enemy_path_counter < path_array.len) {
 	    enemy_path_counter++;
 	}
+
+	RaycastResult enemy_raycast = raycast(tilemap_t, enemy_position, Vector2Normalize(Vector2Subtract(player_position, enemy_position)), player_position, screen_height, screen_width, screen_height);
         
        
 
@@ -934,6 +996,12 @@ int main(int argc, char **argv)
         
         
         DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
+
+	if (enemy_raycast.hit) {
+	    DrawLine(enemy_position.x, enemy_position.y, enemy_raycast.position.x, enemy_raycast.position.y, RED);
+	} else {
+	    DrawLine(enemy_position.x, enemy_position.y, enemy_raycast.position.x, enemy_raycast.position.y, YELLOW);
+	}
 
 	for (int i = 0; i < enemy_health; i++) {
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
