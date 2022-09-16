@@ -71,6 +71,15 @@ typedef enum {
     NUMTILES,
 } TILETYPE;
 
+typedef enum {
+    RESTING,
+    PATROLLING,
+    SEEKING,
+    ATTACKING,
+    FLEEING,
+    NUMBRAINSTATES,
+} BRAINSTATE;
+
 typedef unsigned int uint;
 
 typedef struct {
@@ -113,18 +122,36 @@ typedef struct {
     Vector2 position;
     Vector2 destination;
     Vector2 heading;
+    Vector2 velocity;
     uint path_counter;
     float speed;
     float max_speed;
     bool attacking;
     Path path;
-    
+    bool should_move;
 } Player;
+
+typedef struct {
+    Vector2 position;
+    Vector2 destination;
+    Vector2 heading;
+    uint path_counter;
+    float speed;
+    float max_speed;
+    bool attacking;
+    Path path;
+    BRAINSTATE brain_state;
+    int health;
+} Enemy;
 
 typedef struct {
     bool hit;
     Vector2 position;
 } RaycastResult;
+
+// can't see a reason to not make these global for now
+const int screen_width = 1280;
+const int screen_height = 800;
 
 static TILETYPE g_tilemap[1000] = {
     1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,    1,1,1,1,1,1,1,1,1,1,
@@ -160,6 +187,48 @@ static TILETYPE g_tilemap[1000] = {
     
 
 };
+
+float angle_from_vec2(Vector2 vec)
+{
+    // so which quadrant are we in
+    Vector2 normalized = Vector2Normalize(vec);
+    float angle_x = acos(normalized.x);
+    float angle_y = asin(normalized.y);
+
+
+    // acos is between 0 and pi, so it tells us if we're in quad 1/4 or 2/3
+    if (angle_x < PI/2) {
+	// quadrant 1
+	if (angle_y >= 0) {
+	    return angle_x;
+	}
+	else {
+	    // quadrant 4
+	    return angle_y;
+	}
+    } else {
+	// quadrant 2
+	if (angle_y >= 0) {
+	    return angle_x;
+	}
+	else {
+	    // quadrant 3
+	    return (PI - angle_y);
+	
+	}
+    }
+
+}
+
+float deg_to_rad(float deg)
+{
+    return (deg / 180.0f) * PI;
+}
+
+float rad_to_deg(float rad)
+{
+    return (rad * 180.0f) / PI;
+}
 
 bool out_of_screen(Vector2 pos, int screen_width, int screen_height)
 {
@@ -605,13 +674,18 @@ int save_map();
 
 int load_map();
 
+
+// smart thing to do would be a bresenham line algo
+// instead over tiles
 RaycastResult raycast(TileMap tilemap, Vector2 start, Vector2 direction, Vector2 target, float length, int screen_width, int screen_height)
 {
     RaycastResult result = {.position = {.x = start.x, .y = start.y},
 	.hit = false};
 
     TileMapResult target_tile = world_space_to_tilemap(target.x, target.y, tilemap.tile_width, tilemap.tile_height);
-    for (float t = 0.0f; t += 0.5f; t <= length) {
+
+    // no need to do subpixel, surely
+    for (float t = 0.0f; t += 1.0f; t <= length) {
 	// maybe better to start at .5?
 	result.position = Vector2Add(start, Vector2Scale(direction, t));
 	if (out_of_screen(result.position, screen_width, screen_height)) {
@@ -632,10 +706,40 @@ RaycastResult raycast(TileMap tilemap, Vector2 start, Vector2 direction, Vector2
     return result;	
 }
 
+BRAINSTATE update_brain(TileMap tilemap, Enemy *enemy, Player player)
+{
+    // so we want knowledge of the world,
+    // which is contained in the tilemap, the player, and the enemy
+    // eventually will contain all entities in the world, the geometry...
+    // sounds as well I suppose
+    // and a lightmap (which is just a tilemap in disguise, at this stage)
+
+    // if you can see the player, that will take priority over everything
+    // attempt a raycast to player
+
+    // how will we do a vision cone, exactly?
+    // cast a ray from enemy position in the direction that it's heading,
+    // and do a fov based on that
+    // float angle_of_ray_x = acos(enemy->heading.x);
+    // float angle_of_ray_y = asin(enemy->heading.y);
+    float ray_angle_to_use = angle_from_vec2(enemy->heading);
+    for (float angle = -15.0f; angle < 15.0f; angle += 2.0f) {
+	// switching sin and cos breaks the program at runtime...?
+	Vector2 ray_direction = {.x = cos(ray_angle_to_use + deg_to_rad(angle)), .y = sin(ray_angle_to_use + deg_to_rad(angle))};
+	RaycastResult enemy_raycast = raycast(tilemap, enemy->position, ray_direction, player.position, screen_height, screen_width, screen_height);
+	if (enemy_raycast.hit) {
+	    DrawLine(enemy->position.x, enemy->position.y, enemy_raycast.position.x, enemy_raycast.position.y, RED);
+	} else {
+	    DrawLine(enemy->position.x, enemy->position.y, enemy_raycast.position.x, enemy_raycast.position.y, YELLOW);
+	}
+    }
+    
+
+}
+
 int main(int argc, char **argv)
 {
-    const int screen_width = 1280;
-    const int screen_height = 800;
+
     
     float game_timer = 0.0f;
     
@@ -648,17 +752,6 @@ int main(int argc, char **argv)
     InitAudioDevice();
     
     float target_ms_per_frame = 1.0f/60.0f;
-
-    Vector2 player_position = {.x = screen_width/2.0f, .y = screen_height/2.0f};
-    Vector2 player_destination = {.x = player_position.x, .y = player_position.y};
-    Vector2 player_velocity = {.x = 0.0f, .y = 0.0f};
-    Vector2 player_heading= {.x = 0.0f, .y = 0.0f};
-
-    Vector2 enemy_position = {.x = 600.0f, .y = 400.0f};
-
-    int enemy_health = 100;
-
-    bool player_attacking = false;
 
     float player_attack_radius = 20.0f;
 
@@ -698,33 +791,17 @@ int main(int argc, char **argv)
 	node_array.nodes[i] = (Node){.predecessor = 0, .current = 0};
     }
 
-    Path path_array;
-    Path player_path_array;
-    path_array.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
-    path_array.max = tiles_across * tiles_down;
-    path_array.len = 0;
 
-    player_path_array.indices = malloc(sizeof(uint) * tiles_across * tiles_down);    
-    player_path_array.max = tiles_across * tiles_down;
-    player_path_array.len = 0;
-    for (int i = 0; i < player_path_array.max; i++) {
-	player_path_array.indices[i] = 0;
-    }
-    
-    // Vector2 enemyDestinationTest = {.x = 550.0f, .y = 550.0f};
-    Vector2 enemy_destination_test = {.x = 32.0f, .y = 320.0f};
-    int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height),
-						 world_space_to_tilemap(enemy_destination_test.x, enemy_destination_test.y, tile_width, tile_height),
-						 tilemap,
-						 &node_array, tiles_across, tiles_down);
-    if (flood_result != -1) {
-	reconstruct_path(&path_array, node_array, world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height),
-		     flood_result, tiles_across);
-    }
-    
-    uint enemy_path_counter = 0;
 
-    uint player_path_counter = 0;
+
+
+
+
+
+
+
+
+
 
     bool editing_mode = false;
     bool recently_shifted_modes = false;
@@ -740,6 +817,42 @@ int main(int argc, char **argv)
     uint filename_counter = 0;
 
     bool load_mode = false;
+
+    Player player;
+    player.position = (Vector2){.x = screen_width/2.0f, .y = screen_height/2.0f};
+    player.destination = (Vector2){.x = player.position.x, .y = player.position.y};
+    player.velocity = (Vector2){.x = 0.0f, .y = 0.0f};
+    player.heading = (Vector2){.x = 0.0f, .y = 0.0f};
+    player.attacking = false;
+    player.path.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
+    player.path.max = tiles_across * tiles_down;
+    player.path.len = 0;
+    player.path_counter = 0;
+    for (int i = 0; i < player.path.max; i++) {
+	player.path.indices[i] = 0;
+    }
+
+    Enemy enemy;
+    enemy.position = (Vector2){.x = 600.0f, .y = 400.0f};
+    enemy.health = 100;
+    enemy.attacking = false;
+    enemy.destination = (Vector2){.x = 32.0f, .y = 320.0f};
+    enemy.path.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
+    enemy.path.max = tiles_across * tiles_down;
+    enemy.path.len = 0;
+    enemy.path_counter = 0;
+    for (int i = 0; i < enemy.path.max; i++) {
+	enemy.path.indices[i] = 0;
+    }
+
+    int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height),
+						 world_space_to_tilemap(enemy.destination.x, enemy.destination.y, tile_width, tile_height),
+						 tilemap,
+						 &node_array, tiles_across, tiles_down);
+    if (flood_result != -1) {
+	reconstruct_path(&enemy.path, node_array, world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height),
+		     flood_result, tiles_across);
+    }
 
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
@@ -862,7 +975,7 @@ int main(int argc, char **argv)
         float player_speed = 20.0f;
         float max_speed = 150.0f;
         
-        player_attacking = false;
+        player.attacking = false;
        
         struct Vector2 mouse_pos = {.x = GetMouseX(), .y = GetMouseY()};
 
@@ -875,17 +988,17 @@ int main(int argc, char **argv)
 		tilemap_t.tilemap[tilemap_to_change.y * tiles_across + tilemap_to_change.x] = (tilemap_t.tilemap[tilemap_to_change.y * tiles_across + tilemap_to_change.x] + 1) % NUMTILES;
 	    } else {
 	    
-		player_path_counter = 0;
-		player_destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
+		player.path_counter = 0;
+		player.destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
 	    
 		// maybe not the most efficient thing to do?
-		TileMapResult tempTileMapDest = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
-		TileMapResult tempTileMapCurrent = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
+		TileMapResult tempTileMapDest = world_space_to_tilemap(player.destination.x, player.destination.y, tile_width, tile_height);
+		TileMapResult tempTileMapCurrent = world_space_to_tilemap(player.position.x, player.position.y, tile_width, tile_height);
 		node_array.count = 0;
 		int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tilemap, &node_array, tiles_across, tiles_down);
 		if (floodResult != -1) {
 
-		    reconstruct_path(&player_path_array, node_array, tempTileMapCurrent, floodResult, tiles_across);
+		    reconstruct_path(&(player.path), node_array, tempTileMapCurrent, floodResult, tiles_across);
 		} else {
 		    // set should move = false?
 
@@ -896,39 +1009,39 @@ int main(int argc, char **argv)
             
         }	
 	if (IsMouseButtonPressed(1)) {
-	    player_attacking = true;
+	    player.attacking = true;
             
         }
 
 	
         
-	bool player_should_move = true;
+	player.should_move = true;
     
-        if (Vector2Distance(player_position, player_destination) > 3.0f && player_should_move) {
-	    TileMapResult player_path_tile = index_to_tilemap(player_path_array.indices[player_path_counter], tiles_across);
+        if (Vector2Distance(player.position, player.destination) > 3.0f && player.should_move) {
+	    TileMapResult player_path_tile = index_to_tilemap(player.path.indices[player.path_counter], tiles_across);
 	    Vector2 player_path_vec = tilemap_to_world_space(player_path_tile.x, player_path_tile.y , tile_width, tile_height);
-	    player_heading = Vector2Subtract(player_path_vec, player_position);
-	    player_heading = Vector2Normalize(player_heading);
-	    if (Vector2Distance(player_position, player_path_vec) > 3.0f) {
-		player_position = Vector2Add(player_position, Vector2Scale(player_heading, dtToUse * 50.0f));
+	    player.heading = Vector2Subtract(player_path_vec, player.position);
+	    player.heading = Vector2Normalize(player.heading);
+	    if (Vector2Distance(player.position, player_path_vec) > 3.0f) {
+		player.position = Vector2Add(player.position, Vector2Scale(player.heading, dtToUse * 50.0f));
 	    }
-	    if (Vector2Distance(player_position, player_path_vec) < 3.0f && player_path_counter < player_path_array.len) {
-		player_path_counter++;
+	    if (Vector2Distance(player.position, player_path_vec) < 3.0f && player.path_counter < player.path.len) {
+		player.path_counter++;
 	    }
 		
 
 	
         } else {
-	    player_velocity = (Vector2){.x = 0.0f, .y = 0.0f};
+	    player.velocity = (Vector2){.x = 0.0f, .y = 0.0f};
 	}
 
-	TileMapResult player_tilemap = world_space_to_tilemap(player_position.x, player_position.y, tile_width, tile_height);
+	TileMapResult player_tilemap = world_space_to_tilemap(player.position.x, player.position.y, tile_width, tile_height);
 	TileMapResult mouse_tilemap = world_space_to_tilemap(mouse_pos.x, mouse_pos.y, tile_width, tile_height);
-	TileMapResult destination_tilemap = world_space_to_tilemap(player_destination.x, player_destination.y, tile_width, tile_height);
+	TileMapResult destination_tilemap = world_space_to_tilemap(player.destination.x, player.destination.y, tile_width, tile_height);
 
-	if ((Vector2Distance(player_position, enemy_position) < player_attack_radius)
-	    && player_attacking) {
-	    enemy_health--;
+	if ((Vector2Distance(player.position, enemy.position) < player_attack_radius)
+	    && player.attacking) {
+	    enemy.health--;
 	}
 
 	
@@ -938,23 +1051,23 @@ int main(int argc, char **argv)
             
         
         
-        TileMapResult enemy_path_tile = index_to_tilemap(path_array.indices[enemy_path_counter], tiles_across);
+        TileMapResult enemy_path_tile = index_to_tilemap(enemy.path.indices[enemy.path_counter], tiles_across);
 
 
 	
 	Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tile_width, tile_height);
-	Vector2 enemy_heading_vec = Vector2Subtract(enemy_path_vec, enemy_position);
+	enemy.heading = Vector2Subtract(enemy_path_vec, enemy.position);
 
-	TileMapResult enemy_current_tile = world_space_to_tilemap(enemy_position.x, enemy_position.y, tile_width, tile_height);
-	enemy_heading_vec = Vector2Normalize(enemy_heading_vec);
-	if (Vector2Distance(enemy_position, enemy_path_vec) > 3.0f) {
-	    enemy_position = Vector2Add(enemy_position, Vector2Scale(enemy_heading_vec, dtToUse * 50.0f));
+	TileMapResult enemy_current_tile = world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height);
+	enemy.heading = Vector2Normalize(enemy.heading);
+	if (Vector2Distance(enemy.position, enemy_path_vec) > 3.0f) {
+	    enemy.position = Vector2Add(enemy.position, Vector2Scale(enemy.heading, dtToUse * 50.0f));
 	}
-	if (Vector2Distance(enemy_position, enemy_path_vec) < 3.0f && enemy_path_counter < path_array.len) {
-	    enemy_path_counter++;
+	if (Vector2Distance(enemy.position, enemy_path_vec) < 3.0f && enemy.path_counter < enemy.path.len) {
+	    enemy.path_counter++;
 	}
 
-	RaycastResult enemy_raycast = raycast(tilemap_t, enemy_position, Vector2Normalize(Vector2Subtract(player_position, enemy_position)), player_position, screen_height, screen_width, screen_height);
+
         
        
 
@@ -979,8 +1092,8 @@ int main(int argc, char **argv)
         DrawFPS(30, 30);
 
 	draw_tilemap(tilemap_t);
-	for (int i = 0; i <= path_array.len; i++) {
-	    TileMapResult debugTile = index_to_tilemap(path_array.indices[i], tiles_across);
+	for (int i = 0; i <= enemy.path.len; i++) {
+	    TileMapResult debugTile = index_to_tilemap(enemy.path.indices[i], tiles_across);
 	    DrawRectangleLines(debugTile.x * tile_width, debugTile.y * tile_height, tile_width, tile_height, YELLOW);
 	}
 	
@@ -989,21 +1102,18 @@ int main(int argc, char **argv)
 	DrawRectangleLines(mouse_tilemap.x * tile_width, mouse_tilemap.y * tile_height, tile_width, tile_height, YELLOW);
 	DrawRectangleLines(destination_tilemap.x * tile_width, destination_tilemap.y * tile_height, tile_width, tile_height, PINK);
 
-	DrawCircle(player_position.x, player_position.y, 10, RAYWHITE);
+	DrawCircle(player.position.x, player.position.y, 10, RAYWHITE);
 
 	
-	DrawCircle(enemy_position.x, enemy_position.y, 10, BLUE);
+	DrawCircle(enemy.position.x, enemy.position.y, 10, BLUE);
         
         
         DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
 
-	if (enemy_raycast.hit) {
-	    DrawLine(enemy_position.x, enemy_position.y, enemy_raycast.position.x, enemy_raycast.position.y, RED);
-	} else {
-	    DrawLine(enemy_position.x, enemy_position.y, enemy_raycast.position.x, enemy_raycast.position.y, YELLOW);
-	}
 
-	for (int i = 0; i < enemy_health; i++) {
+	update_brain(tilemap_t, &enemy, player); 
+
+	for (int i = 0; i < enemy.health; i++) {
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
 	    //
 	}
