@@ -10,7 +10,7 @@
 
 /*
  *TODO: 
- * start making a tilemap editor since I'll definitely need it
+ * make a 'vision cone' function 
  
  *brain for enemy
 
@@ -129,6 +129,7 @@ typedef struct {
     bool attacking;
     Path path;
     bool should_move;
+    int health;
 } Player;
 
 typedef struct {
@@ -142,6 +143,12 @@ typedef struct {
     Path path;
     BRAINSTATE brain_state;
     int health;
+    float attack_radius;
+    Vector2 last_known_player_position;
+    float attack_timer;
+    float rest_timer;
+    float attack_timer_max;
+    bool has_seeking_path;
 } Enemy;
 
 typedef struct {
@@ -706,7 +713,7 @@ RaycastResult raycast(TileMap tilemap, Vector2 start, Vector2 direction, Vector2
     return result;	
 }
 
-BRAINSTATE update_brain(TileMap tilemap, Enemy *enemy, Player player)
+BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Player *player, float dt)
 {
     // so we want knowledge of the world,
     // which is contained in the tilemap, the player, and the enemy
@@ -723,18 +730,108 @@ BRAINSTATE update_brain(TileMap tilemap, Enemy *enemy, Player player)
     // float angle_of_ray_x = acos(enemy->heading.x);
     // float angle_of_ray_y = asin(enemy->heading.y);
     float ray_angle_to_use = angle_from_vec2(enemy->heading);
+    bool can_see_player = false;
+    
+    // update some statuses based on what we can see initially
     for (float angle = -15.0f; angle < 15.0f; angle += 2.0f) {
 	// switching sin and cos breaks the program at runtime...?
 	Vector2 ray_direction = {.x = cos(ray_angle_to_use + deg_to_rad(angle)), .y = sin(ray_angle_to_use + deg_to_rad(angle))};
-	RaycastResult enemy_raycast = raycast(tilemap, enemy->position, ray_direction, player.position, screen_height, screen_width, screen_height);
+	RaycastResult enemy_raycast = raycast(tilemap, enemy->position, ray_direction, player->position, screen_height, screen_width, screen_height);
 	if (enemy_raycast.hit) {
+	    // we can see him and he's close
+	    can_see_player = true;
+	    if (Vector2Distance(enemy->position, player->position) < enemy->attack_radius) {
+		// there should be a swing, rather than instant damage
+		enemy->brain_state = ATTACKING;
+		enemy->last_known_player_position = player->position;
+		enemy->attack_timer = 0.0f;
+	    } else {
+		// we can see him but he's far
+		enemy->brain_state = SEEKING;
+		enemy->last_known_player_position = player->position;
+	    }
 	    DrawLine(enemy->position.x, enemy->position.y, enemy_raycast.position.x, enemy_raycast.position.y, RED);
 	} else {
 	    DrawLine(enemy->position.x, enemy->position.y, enemy_raycast.position.x, enemy_raycast.position.y, YELLOW);
 	}
     }
-    
 
+    switch (enemy->brain_state) {
+    case RESTING: {
+	    enemy->rest_timer = (enemy->rest_timer + dt);
+	    // think about a proper value
+	    if (enemy->rest_timer > 2.0f) {
+		enemy->brain_state = PATROLLING;
+		enemy->destination = (Vector2){.x = 32.0f, .y = 320.0f};
+		enemy->path_counter = 0;
+		int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy->position.x, enemy->position.y, tilemap.tile_width, tilemap.tile_height),
+							     world_space_to_tilemap(enemy->destination.x, enemy->destination.y, tilemap.tile_width, tilemap.tile_height),
+							     tilemap.tilemap,
+							     node_array, tilemap.tiles_across, tilemap.tiles_down);
+		if (flood_result != -1) {
+		    reconstruct_path(&(enemy->path), *node_array, world_space_to_tilemap(enemy->position.x, enemy->position.y, tilemap.tile_width, tilemap.tile_height),
+				     flood_result, tilemap.tiles_across);
+		}
+	    }
+	    break;
+    }
+    case PATROLLING: {	
+	    TileMapResult enemy_path_tile = index_to_tilemap(enemy->path.indices[enemy->path_counter], tilemap.tiles_across);
+
+
+	
+	    Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tilemap.tile_width, tilemap.tile_height);
+	    enemy->heading = Vector2Subtract(enemy_path_vec, enemy->position);
+
+	    TileMapResult enemy_current_tile = world_space_to_tilemap(enemy->position.x, enemy->position.y, tilemap.tile_width, tilemap.tile_height);
+	    enemy->heading = Vector2Normalize(enemy->heading);
+	    if (Vector2Distance(enemy->position, enemy_path_vec) > 3.0f) {
+		enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
+	    }
+	    if (Vector2Distance(enemy->position, enemy_path_vec) < 3.0f && enemy->path_counter < enemy->path.len) {
+		enemy->path_counter++;
+	    }
+	    break;
+	}
+    case SEEKING:
+	{
+	    if (can_see_player) {
+		// go straight towards player
+		enemy->heading = Vector2Normalize(Vector2Subtract(player->position, enemy->position));
+		enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
+	    } else {
+		enemy->heading = Vector2Normalize(Vector2Subtract(enemy->last_known_player_position, enemy->position));
+		enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
+		if (Vector2Distance(enemy->last_known_player_position, enemy->position) < 5.0f) {
+		    enemy->brain_state = RESTING;
+		    enemy->rest_timer = 0.0f;
+		}
+		//if (enemy->has_seeking_path) {
+		    // continue on path
+		//} else {
+		    // make a path
+
+		//}
+	    }
+	    // move
+	    break;
+	}
+    case ATTACKING:
+	enemy->attack_timer = (enemy->attack_timer + dt);
+	if (enemy->attack_timer > enemy->attack_timer_max) {
+	    enemy->attack_timer = 0.0f;
+	    if (Vector2Distance(enemy->position, player->position)) {
+		// make this damage variable later etc
+		player->health = player->health - 1;
+	    }
+	}
+	break;
+    case FLEEING:
+	break;
+    }
+    // if we want, this will let us know the enemies last brain state
+    // but maybe instead we have an error state?
+    return enemy->brain_state;    
 }
 
 int main(int argc, char **argv)
@@ -831,10 +928,11 @@ int main(int argc, char **argv)
     for (int i = 0; i < player.path.max; i++) {
 	player.path.indices[i] = 0;
     }
+    player.health = 10;
 
     Enemy enemy;
     enemy.position = (Vector2){.x = 600.0f, .y = 400.0f};
-    enemy.health = 100;
+    enemy.health = 10;
     enemy.attacking = false;
     enemy.destination = (Vector2){.x = 32.0f, .y = 320.0f};
     enemy.path.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
@@ -844,6 +942,11 @@ int main(int argc, char **argv)
     for (int i = 0; i < enemy.path.max; i++) {
 	enemy.path.indices[i] = 0;
     }
+    enemy.attack_radius = 10.0f;
+    enemy.attack_timer_max = 1.0f;
+    enemy.has_seeking_path = false;
+    enemy.brain_state = PATROLLING;
+    enemy.rest_timer = 0.0f;
 
     int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height),
 						 world_space_to_tilemap(enemy.destination.x, enemy.destination.y, tile_width, tile_height),
@@ -972,7 +1075,7 @@ int main(int argc, char **argv)
         
         
         
-        float player_speed = 20.0f;
+        float player_speed = 150.0f;
         float max_speed = 150.0f;
         
         player.attacking = false;
@@ -1023,7 +1126,7 @@ int main(int argc, char **argv)
 	    player.heading = Vector2Subtract(player_path_vec, player.position);
 	    player.heading = Vector2Normalize(player.heading);
 	    if (Vector2Distance(player.position, player_path_vec) > 3.0f) {
-		player.position = Vector2Add(player.position, Vector2Scale(player.heading, dtToUse * 50.0f));
+		player.position = Vector2Add(player.position, Vector2Scale(player.heading, dtToUse * player_speed));
 	    }
 	    if (Vector2Distance(player.position, player_path_vec) < 3.0f && player.path_counter < player.path.len) {
 		player.path_counter++;
@@ -1050,7 +1153,7 @@ int main(int argc, char **argv)
         //game_timer += dtToUse;
             
         
-        
+        #if 0
         TileMapResult enemy_path_tile = index_to_tilemap(enemy.path.indices[enemy.path_counter], tiles_across);
 
 
@@ -1066,6 +1169,7 @@ int main(int argc, char **argv)
 	if (Vector2Distance(enemy.position, enemy_path_vec) < 3.0f && enemy.path_counter < enemy.path.len) {
 	    enemy.path_counter++;
 	}
+	#endif
 
 
         
@@ -1097,7 +1201,7 @@ int main(int argc, char **argv)
 	    DrawRectangleLines(debugTile.x * tile_width, debugTile.y * tile_height, tile_width, tile_height, YELLOW);
 	}
 	
-	DrawRectangleLines(enemy_current_tile.x * tile_width, enemy_current_tile.y * tile_height, tile_width, tile_height, RED);
+	//DrawRectangleLines(enemy_current_tile.x * tile_width, enemy_current_tile.y * tile_height, tile_width, tile_height, RED);
 	DrawRectangleLines(player_tilemap.x * tile_width, player_tilemap.y * tile_height, tile_width, tile_height, RED);
 	DrawRectangleLines(mouse_tilemap.x * tile_width, mouse_tilemap.y * tile_height, tile_width, tile_height, YELLOW);
 	DrawRectangleLines(destination_tilemap.x * tile_width, destination_tilemap.y * tile_height, tile_width, tile_height, PINK);
@@ -1111,7 +1215,7 @@ int main(int argc, char **argv)
         DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
 
 
-	update_brain(tilemap_t, &enemy, player); 
+	update_brain(tilemap_t, &node_array, &enemy, &player, dtToUse); 
 
 	for (int i = 0; i < enemy.health; i++) {
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
