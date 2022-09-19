@@ -10,9 +10,24 @@
 
 /*
  *TODO: 
- * make a 'vision cone' function 
+ * COMBAT (second) pass:
+ * fix fleeing
+ * heavy/light attacks?
+ * we want blocking
+ * we maybe want dodging (double click?)
  
+
+
+ * make a 'vision cone' function 
+
+ * long term passage of time- keep track of 'years', and split to seasons
+ * track temperature/weather for survival aspect
+ 
+ *footsteps/sound propagation
+
  *brain for enemy
+
+ *maybe we want enemies to be able to get 'lost' in unfamiliar areas
 
  *random idea
  *enemies can get possessed by more intelligent daemons
@@ -130,6 +145,8 @@ typedef struct {
     Path path;
     bool should_move;
     int health;
+    float attack_timer;
+    float attack_timer_max;
 } Player;
 
 typedef struct {
@@ -149,6 +166,9 @@ typedef struct {
     float rest_timer;
     float attack_timer_max;
     bool has_seeking_path;
+    bool alive;
+    float fleeing_timer;
+    float fleeing_timer_max;
 } Enemy;
 
 typedef struct {
@@ -635,6 +655,24 @@ void reconstruct_path(Path *path, NodeArray nodes, TileMapResult start, int end_
     // so we can THEN do a countdown-add to the path, set its length appropriately and use that later
 }
 
+bool pathfind_to_destination(Path *path, TileMap tilemap, NodeArray *node_array, Vector2 position, Vector2 destination)
+{
+    // should we instead take an entity so we always set its path_counter to zero?
+    // or incorporate that into the path itself?
+    node_array->count = 0;
+    int flood_result = flood_fill_to_destination(world_space_to_tilemap(position.x, position.y, tilemap.tile_width, tilemap.tile_height),
+						 world_space_to_tilemap(destination.x, destination.y, tilemap.tile_width, tilemap.tile_height),
+						 tilemap.tilemap,
+						 node_array, tilemap.tiles_across, tilemap.tiles_down);
+    if (flood_result != -1) {
+	reconstruct_path(path, *node_array, world_space_to_tilemap(position.x, position.y, tilemap.tile_width, tilemap.tile_height),
+			 flood_result, tilemap.tiles_across);
+	return true;
+    } else {
+	return false;
+    }
+}
+
 void update_player(Player *player, float dt, NodeArray *node_array, TILETYPE *tilemap)
 {
 }
@@ -740,11 +778,13 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
 	if (enemy_raycast.hit) {
 	    // we can see him and he's close
 	    can_see_player = true;
+	    enemy->last_known_player_position = player->position;
 	    if (Vector2Distance(enemy->position, player->position) < enemy->attack_radius) {
 		// there should be a swing, rather than instant damage
-		enemy->brain_state = ATTACKING;
-		enemy->last_known_player_position = player->position;
-		enemy->attack_timer = 0.0f;
+		if (enemy->brain_state != ATTACKING) {
+		    enemy->brain_state = ATTACKING;
+		    enemy->attack_timer = 0.0f;
+		}
 	    } else {
 		// we can see him but he's far
 		enemy->brain_state = SEEKING;
@@ -756,6 +796,9 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
 	}
     }
 
+    int health_to_flee = 3;
+
+
     switch (enemy->brain_state) {
     case RESTING: {
 	    enemy->rest_timer = (enemy->rest_timer + dt);
@@ -764,14 +807,9 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
 		enemy->brain_state = PATROLLING;
 		enemy->destination = (Vector2){.x = 32.0f, .y = 320.0f};
 		enemy->path_counter = 0;
-		int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy->position.x, enemy->position.y, tilemap.tile_width, tilemap.tile_height),
-							     world_space_to_tilemap(enemy->destination.x, enemy->destination.y, tilemap.tile_width, tilemap.tile_height),
-							     tilemap.tilemap,
-							     node_array, tilemap.tiles_across, tilemap.tiles_down);
-		if (flood_result != -1) {
-		    reconstruct_path(&(enemy->path), *node_array, world_space_to_tilemap(enemy->position.x, enemy->position.y, tilemap.tile_width, tilemap.tile_height),
-				     flood_result, tilemap.tiles_across);
-		}
+		bool pathfind_success = pathfind_to_destination(&(enemy->path), tilemap, node_array, enemy->position, enemy->destination);
+		// TODO: handle pathfind fail
+
 	    }
 	    break;
     }
@@ -800,6 +838,7 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
 		enemy->heading = Vector2Normalize(Vector2Subtract(player->position, enemy->position));
 		enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
 	    } else {
+		// should do a proper pathfind here so we don't clip geometry
 		enemy->heading = Vector2Normalize(Vector2Subtract(enemy->last_known_player_position, enemy->position));
 		enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
 		if (Vector2Distance(enemy->last_known_player_position, enemy->position) < 5.0f) {
@@ -817,16 +856,37 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
 	    break;
 	}
     case ATTACKING:
-	enemy->attack_timer = (enemy->attack_timer + dt);
-	if (enemy->attack_timer > enemy->attack_timer_max) {
-	    enemy->attack_timer = 0.0f;
-	    if (Vector2Distance(enemy->position, player->position)) {
-		// make this damage variable later etc
-		player->health = player->health - 1;
+	if (can_see_player) {
+	    enemy->attack_timer = (enemy->attack_timer + dt);
+	    if (enemy->attack_timer >= enemy->attack_timer_max) {
+		enemy->attack_timer = 0.0f;
+		if (Vector2Distance(enemy->position, player->position) < (enemy->attack_radius)) {
+		    // make this damage variable later etc
+		    player->health = player->health - 1;
+		}
 	    }
+	} else {
+	    enemy->brain_state = SEEKING;
+	}
+	if (enemy->health <= health_to_flee) {
+	    
+	    enemy->brain_state = FLEEING;
 	}
 	break;
     case FLEEING:
+
+	enemy->heading = Vector2Normalize(Vector2Subtract(enemy->last_known_player_position, enemy->position));
+	enemy->heading = Vector2Scale(enemy->heading, -1.0f);
+	if (!out_of_screen(Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f)), screen_width, screen_height)) {	    
+	    enemy->position = Vector2Add(enemy->position, Vector2Scale(enemy->heading, dt * 50.0f));
+	}
+	if (!can_see_player) {
+	    enemy->fleeing_timer += dt;
+	    if (enemy->fleeing_timer > enemy->fleeing_timer_max) {
+		enemy->rest_timer = 0.0f;
+		enemy->brain_state = RESTING;
+	    }
+	}
 	break;
     }
     // if we want, this will let us know the enemies last brain state
@@ -929,6 +989,10 @@ int main(int argc, char **argv)
 	player.path.indices[i] = 0;
     }
     player.health = 10;
+    player.attack_timer = 0.0f;
+    // maybe half a second?
+    player.attack_timer_max = 0.5f;
+	
 
     Enemy enemy;
     enemy.position = (Vector2){.x = 600.0f, .y = 400.0f};
@@ -942,11 +1006,14 @@ int main(int argc, char **argv)
     for (int i = 0; i < enemy.path.max; i++) {
 	enemy.path.indices[i] = 0;
     }
-    enemy.attack_radius = 10.0f;
+    enemy.attack_radius = 20.0f;
     enemy.attack_timer_max = 1.0f;
+    enemy.attack_timer = 0.0f;
     enemy.has_seeking_path = false;
     enemy.brain_state = PATROLLING;
     enemy.rest_timer = 0.0f;
+    enemy.fleeing_timer = 0.0f;
+    enemy.fleeing_timer_max = 3.0f;
 
     int flood_result = flood_fill_to_destination(world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height),
 						 world_space_to_tilemap(enemy.destination.x, enemy.destination.y, tile_width, tile_height),
@@ -960,7 +1027,7 @@ int main(int argc, char **argv)
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
 	float dt = GetFrameTime();
-	float dtToUse = min(dt, target_ms_per_frame);
+	float dt_to_use = min(dt, target_ms_per_frame);
 	// sound stuff
 	if (!IsSoundPlaying(rainSound)) {
 	    PlaySound(rainSound);
@@ -1078,7 +1145,7 @@ int main(int argc, char **argv)
         float player_speed = 150.0f;
         float max_speed = 150.0f;
         
-        player.attacking = false;
+
        
         struct Vector2 mouse_pos = {.x = GetMouseX(), .y = GetMouseY()};
 
@@ -1093,19 +1160,8 @@ int main(int argc, char **argv)
 	    
 		player.path_counter = 0;
 		player.destination = (Vector2){.x = mouse_pos.x, .y = mouse_pos.y};
-	    
-		// maybe not the most efficient thing to do?
-		TileMapResult tempTileMapDest = world_space_to_tilemap(player.destination.x, player.destination.y, tile_width, tile_height);
-		TileMapResult tempTileMapCurrent = world_space_to_tilemap(player.position.x, player.position.y, tile_width, tile_height);
-		node_array.count = 0;
-		int floodResult = flood_fill_to_destination(tempTileMapCurrent, tempTileMapDest, tilemap, &node_array, tiles_across, tiles_down);
-		if (floodResult != -1) {
-
-		    reconstruct_path(&(player.path), node_array, tempTileMapCurrent, floodResult, tiles_across);
-		} else {
-		    // set should move = false?
-
-		}
+		bool pathfind_success = pathfind_to_destination(&(player.path), tilemap_t, &node_array, player.position, player.destination);
+		// TODO: handle bad pathfind
 	    }
             
             
@@ -1117,7 +1173,7 @@ int main(int argc, char **argv)
         }
 
 	
-        
+        // TODO: when should this be false?
 	player.should_move = true;
     
         if (Vector2Distance(player.position, player.destination) > 3.0f && player.should_move) {
@@ -1126,7 +1182,7 @@ int main(int argc, char **argv)
 	    player.heading = Vector2Subtract(player_path_vec, player.position);
 	    player.heading = Vector2Normalize(player.heading);
 	    if (Vector2Distance(player.position, player_path_vec) > 3.0f) {
-		player.position = Vector2Add(player.position, Vector2Scale(player.heading, dtToUse * player_speed));
+		player.position = Vector2Add(player.position, Vector2Scale(player.heading, dt_to_use * player_speed));
 	    }
 	    if (Vector2Distance(player.position, player_path_vec) < 3.0f && player.path_counter < player.path.len) {
 		player.path_counter++;
@@ -1142,34 +1198,25 @@ int main(int argc, char **argv)
 	TileMapResult mouse_tilemap = world_space_to_tilemap(mouse_pos.x, mouse_pos.y, tile_width, tile_height);
 	TileMapResult destination_tilemap = world_space_to_tilemap(player.destination.x, player.destination.y, tile_width, tile_height);
 
-	if ((Vector2Distance(player.position, enemy.position) < player_attack_radius)
-	    && player.attacking) {
-	    enemy.health--;
+	if (player.attacking) {
+	    player.attack_timer += dt_to_use;
+	    if (player.attack_timer >= player.attack_timer_max) {
+		player.attack_timer = 0.0f;
+		player.attacking = false;
+		if ((Vector2Distance(player.position, enemy.position) < player_attack_radius)) {		    
+		    enemy.health--;
+		}
+	    }
 	}
+
 
 	
             
-        //dt -= dtToUse;
-        //game_timer += dtToUse;
+        //dt -= dt_to_use;
+        //game_timer += dt_to_use;
             
         
-        #if 0
-        TileMapResult enemy_path_tile = index_to_tilemap(enemy.path.indices[enemy.path_counter], tiles_across);
 
-
-	
-	Vector2 enemy_path_vec = tilemap_to_world_space(enemy_path_tile.x, enemy_path_tile.y, tile_width, tile_height);
-	enemy.heading = Vector2Subtract(enemy_path_vec, enemy.position);
-
-	TileMapResult enemy_current_tile = world_space_to_tilemap(enemy.position.x, enemy.position.y, tile_width, tile_height);
-	enemy.heading = Vector2Normalize(enemy.heading);
-	if (Vector2Distance(enemy.position, enemy_path_vec) > 3.0f) {
-	    enemy.position = Vector2Add(enemy.position, Vector2Scale(enemy.heading, dtToUse * 50.0f));
-	}
-	if (Vector2Distance(enemy.position, enemy_path_vec) < 3.0f && enemy.path_counter < enemy.path.len) {
-	    enemy.path_counter++;
-	}
-	#endif
 
 
         
@@ -1215,17 +1262,21 @@ int main(int argc, char **argv)
         DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
 
 
-	update_brain(tilemap_t, &node_array, &enemy, &player, dtToUse); 
+	update_brain(tilemap_t, &node_array, &enemy, &player, dt_to_use); 
 
 	for (int i = 0; i < enemy.health; i++) {
 	    DrawCircle(10 + i*5, 10, 3, RAYWHITE);
+	    //
+	}
+	for (int i = 0; i < player.health; i++) {
+	    DrawCircle(10 + i*5, 30, 3, RED);
 	    //
 	}
 
 
 	// debug drawing
 	if (recently_shifted_modes) {
-	    recent_timer += dtToUse;
+	    recent_timer += dt_to_use;
 	    if (editing_mode) {
 		DrawText("editing mode", 10, 10, 14, BLACK);
 	    } else {
@@ -1240,7 +1291,25 @@ int main(int argc, char **argv)
         if (save_mode || load_mode) {
 	    DrawText(filename_buffer, screen_width - 100, 10, 14, BLACK);
 	}
-            
+
+	// add some debug info for enemy brain status
+	switch (enemy.brain_state) {
+	case (RESTING):
+	    DrawText("enemy resting", screen_width - 100, 30, 14, BLACK);
+	    break;
+	case (PATROLLING):
+	    DrawText("enemy patrolling", screen_width - 100, 30, 14, BLACK);
+	    break;
+	case (SEEKING):
+	    DrawText("enemy seeking", screen_width - 100, 30, 14, BLACK);
+	    break;
+	case (ATTACKING):
+	    DrawText("enemy attacking", screen_width - 100, 30, 14, BLACK);
+	    break;
+	case (FLEEING):
+	    DrawText("enemy fleeing", screen_width - 100, 30, 14, BLACK);
+	    break;
+	}
            
                 
                
