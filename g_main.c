@@ -13,17 +13,24 @@
  * COMBAT (second) pass:
  * fix fleeing
  * heavy/light attacks?
+ * add some directionality to attacks
+ * just take an angle between them
+ * rather than just area
  * we want blocking
  * we maybe want dodging (double click?)
- 
 
+    *footsteps/sound propagation
 
+ *DONE
+  * visualize attacks 
+ * -countdown timer visual (done)
+   -radius visualization (done)
  * make a 'vision cone' function 
 
  * long term passage of time- keep track of 'years', and split to seasons
  * track temperature/weather for survival aspect
  
- *footsteps/sound propagation
+
 
  *brain for enemy
 
@@ -87,6 +94,7 @@ typedef enum {
 } TILETYPE;
 
 typedef enum {
+    DEAD,
     RESTING,
     PATROLLING,
     SEEKING,
@@ -247,6 +255,13 @@ float angle_from_vec2(Vector2 vec)
 
 }
 
+
+
+bool number_between(float number, float lower, float upper)
+{
+    return (number > lower) && (number < upper);
+}
+
 float deg_to_rad(float deg)
 {
     return (deg / 180.0f) * PI;
@@ -255,6 +270,15 @@ float deg_to_rad(float deg)
 float rad_to_deg(float rad)
 {
     return (rad * 180.0f) / PI;
+}
+
+float angle_between(Vector2 v1, Vector2 v2)
+{
+    // magv1*magv2*cos(theta) = dot_product
+    // cos(theta) = dot_product/ (magv1)(magv2)
+    // theta = inv_cos(dot_product/ (magv1)(magv2))
+    float result = rad_to_deg(acos(Vector2DotProduct(v1, v2) / (Vector2Length(v1) * Vector2Length(v2))));
+    return result;
 }
 
 bool out_of_screen(Vector2 pos, int screen_width, int screen_height)
@@ -767,6 +791,12 @@ BRAINSTATE update_brain(TileMap tilemap, NodeArray *node_array, Enemy *enemy, Pl
     // and do a fov based on that
     // float angle_of_ray_x = acos(enemy->heading.x);
     // float angle_of_ray_y = asin(enemy->heading.y);
+
+    if (!enemy->alive) {
+	enemy->brain_state = DEAD;
+	return enemy->brain_state;
+    }
+    
     float ray_angle_to_use = angle_from_vec2(enemy->heading);
     bool can_see_player = false;
     
@@ -910,7 +940,7 @@ int main(int argc, char **argv)
     
     float target_ms_per_frame = 1.0f/60.0f;
 
-    float player_attack_radius = 20.0f;
+    float player_attack_radius = 40.0f;
 
     Sound rainSound = LoadSound("sound/rain-07.wav");
 
@@ -965,7 +995,7 @@ int main(int argc, char **argv)
     bool save_mode = false;
     float recent_timer = 0.0f;
     float recent_timer_max = 2.0f;
-
+    char text_buffer[512];
     char filename_buffer[512];    
     for (int i = 0; i < 512; i++) {
 	filename_buffer[i] = '\0';
@@ -979,7 +1009,7 @@ int main(int argc, char **argv)
     player.position = (Vector2){.x = screen_width/2.0f, .y = screen_height/2.0f};
     player.destination = (Vector2){.x = player.position.x, .y = player.position.y};
     player.velocity = (Vector2){.x = 0.0f, .y = 0.0f};
-    player.heading = (Vector2){.x = 0.0f, .y = 0.0f};
+    player.heading = (Vector2){.x = 1.0f, .y = 0.0f};
     player.attacking = false;
     player.path.indices = malloc(sizeof(uint) * tiles_across * tiles_down);
     player.path.max = tiles_across * tiles_down;
@@ -1006,7 +1036,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < enemy.path.max; i++) {
 	enemy.path.indices[i] = 0;
     }
-    enemy.attack_radius = 20.0f;
+    enemy.attack_radius = 40.0f;
     enemy.attack_timer_max = 1.0f;
     enemy.attack_timer = 0.0f;
     enemy.has_seeking_path = false;
@@ -1197,19 +1227,36 @@ int main(int argc, char **argv)
 	TileMapResult player_tilemap = world_space_to_tilemap(player.position.x, player.position.y, tile_width, tile_height);
 	TileMapResult mouse_tilemap = world_space_to_tilemap(mouse_pos.x, mouse_pos.y, tile_width, tile_height);
 	TileMapResult destination_tilemap = world_space_to_tilemap(player.destination.x, player.destination.y, tile_width, tile_height);
+	
 
+	// this doesn't seem right
+	float player_enemy_angle = angle_between(player.heading, Vector2Subtract(enemy.position, player.position));
+	sprintf_s(text_buffer, 512, "angle between is %f\n", player_enemy_angle);
+	
 	if (player.attacking) {
 	    player.attack_timer += dt_to_use;
+	    // this is like saying the attack has a build up?
+	    // but this would be good to visualize
 	    if (player.attack_timer >= player.attack_timer_max) {
 		player.attack_timer = 0.0f;
 		player.attacking = false;
-		if ((Vector2Distance(player.position, enemy.position) < player_attack_radius)) {		    
-		    enemy.health--;
+		// this should actually be a loop over enemy array
+		if (enemy.alive) {
+		    
+
+		    if ((Vector2Distance(player.position, enemy.position) < player_attack_radius) &&
+			number_between(player_enemy_angle, -45.0f, 45.0f)) {
+			// really need to print out angle between them in the debug screen
+			enemy.health--;
+		    }
 		}
 	    }
 	}
-
-
+	
+	// check for enemy death
+	if (enemy.health <= 0) {
+	    enemy.alive = false;
+	}
 	
             
         //dt -= dt_to_use;
@@ -1239,13 +1286,13 @@ int main(int argc, char **argv)
         
         
      
-        
+
         DrawFPS(30, 30);
 
 	draw_tilemap(tilemap_t);
 	for (int i = 0; i <= enemy.path.len; i++) {
-	    TileMapResult debugTile = index_to_tilemap(enemy.path.indices[i], tiles_across);
-	    DrawRectangleLines(debugTile.x * tile_width, debugTile.y * tile_height, tile_width, tile_height, YELLOW);
+	    TileMapResult debug_tile = index_to_tilemap(enemy.path.indices[i], tiles_across);
+	    DrawRectangleLines(debug_tile.x * tile_width, debug_tile.y * tile_height, tile_width, tile_height, YELLOW);
 	}
 	
 	//DrawRectangleLines(enemy_current_tile.x * tile_width, enemy_current_tile.y * tile_height, tile_width, tile_height, RED);
@@ -1253,14 +1300,24 @@ int main(int argc, char **argv)
 	DrawRectangleLines(mouse_tilemap.x * tile_width, mouse_tilemap.y * tile_height, tile_width, tile_height, YELLOW);
 	DrawRectangleLines(destination_tilemap.x * tile_width, destination_tilemap.y * tile_height, tile_width, tile_height, PINK);
 
-	DrawCircle(player.position.x, player.position.y, 10, RAYWHITE);
-
+	// want to lerp between colors (it's not that simple but whatever)
+	Color player_normal_color = RAYWHITE;
+	Color player_attack_color = (Color){220, 15, 15, 255};
+	int red_diff = player_attack_color.r - player_normal_color.r;
+	int green_diff = player_attack_color.g - player_normal_color.g;
+	int blue_diff = player_attack_color.b - player_normal_color.b;
+	float t_lerp = player.attack_timer / player.attack_timer_max;
+	Color lerped_player_color = (Color){(int)(player_normal_color.r + t_lerp*red_diff), (int)(player_normal_color.g + t_lerp*green_diff), (int)(player_normal_color.b + t_lerp*blue_diff), 255};
+	DrawCircle(player.position.x, player.position.y, 10, lerped_player_color);
+	DrawLineV(player.position, Vector2Add(player.position, Vector2Scale(player.heading, 10.0f)), RED);
+	DrawCircleLines(player.position.x, player.position.y, player_attack_radius * t_lerp, lerped_player_color);
 	
 	DrawCircle(enemy.position.x, enemy.position.y, 10, BLUE);
         
         
         DrawCircleLines(mouse_pos.x, mouse_pos.y, 5, LIGHTGRAY);
-
+	
+	DrawText(text_buffer, 10, 10, 14, BLACK);
 
 	update_brain(tilemap_t, &node_array, &enemy, &player, dt_to_use); 
 
